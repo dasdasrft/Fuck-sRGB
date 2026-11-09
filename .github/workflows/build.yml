@@ -21,11 +21,11 @@ jobs:
         shell: cmd
         run: |
           rc /nologo sdr-gamma.rc
-          cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.4.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+          cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.5.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: Fuck-sRGB-1.2.4
-          path: Fuck-sRGB-1.2.4.exe
+          name: Fuck-sRGB-1.2.5
+          path: Fuck-sRGB-1.2.5.exe
           if-no-files-found: error

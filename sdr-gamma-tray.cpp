@@ -52,39 +52,13 @@ std::wstring startupContext() {
 
 // Temporary diagnostic: a fixed path written with CreateFileW, so it does not
 // depend on the environment block or the filesystem library.
-void writeBootTrace() {
-    DWORD session = 0;
-    ProcessIdToSessionId(GetCurrentProcessId(), &session);
-    wchar_t station[128] = L"?";
-    if (HWINSTA winsta = GetProcessWindowStation())
-        GetUserObjectInformationW(winsta, UOI_NAME, station, sizeof(station), nullptr);
-    wchar_t local[256] = L"?";
-    GetEnvironmentVariableW(L"LOCALAPPDATA", local, ARRAYSIZE(local));
-    bool elevated = false;
-    DWORD integrity = 0;
-    if (HANDLE token = nullptr; OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
-        TOKEN_ELEVATION info{};
-        DWORD size = sizeof(info);
-        if (GetTokenInformation(token, TokenElevation, &info, size, &size))
-            elevated = info.TokenIsElevated != 0;
-        DWORD needed = 0;
-        GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &needed);
-        if (needed) {
-            std::vector<Byte> buffer(needed);
-            if (GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), needed, &needed)) {
-                const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer.data());
-                const auto count = *GetSidSubAuthorityCount(label->Label.Sid);
-                integrity = *GetSidSubAuthority(label->Label.Sid, count - 1);
-            }
-        }
-        CloseHandle(token);
-    }
+void writeTrace(const std::wstring& text) {
     SYSTEMTIME now{};
     GetLocalTime(&now);
-    wchar_t line[1024] = {};
-    swprintf_s(line, L"%04u-%02u-%02u %02u:%02u:%02u pid=%lu session=%lu elevated=%d integrity=0x%04X station=%ls localappdata=%ls\r\n",
-               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
-               GetCurrentProcessId(), session, elevated ? 1 : 0, integrity, station, local);
+    wchar_t line[2048] = {};
+    swprintf_s(line, L"%02u:%02u:%02u.%03u pid=%lu %ls\r\n",
+               now.wHour, now.wMinute, now.wSecond, now.wMilliseconds,
+               GetCurrentProcessId(), text.c_str());
     HANDLE file = CreateFileW(L"C:\\Users\\26076\\Desktop\\123\\boottrace.txt", FILE_APPEND_DATA,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -101,10 +75,10 @@ public:
     }
 
     int run(HINSTANCE instance) {
-        writeStartupLog(L"run: registering window class");
+        writeTrace(L"run: registering window class");
         taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
         if (!taskbarCreated_) fail(L"Register taskbar message");
-        writeStartupLog(L"run: creating window");
+        writeTrace(L"run: creating window");
         WNDCLASSW wc{};
         wc.hInstance = instance;
         wc.lpfnWndProc = procedure;
@@ -115,21 +89,21 @@ public:
                                 0, 0, 0, 0, nullptr, nullptr, instance, this);
         if (!hwnd_) fail(L"Create tray window");
 
-        writeStartupLog(L"run: filtering messages");
+        writeTrace(L"run: filtering messages");
         if (!ChangeWindowMessageFilterEx(hwnd_, iconMessage, MSGFLT_ALLOW, nullptr) ||
             !ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr))
             fail(L"Connect to the Windows taskbar");
         hdr_ = detectHdr();
-        writeStartupLog(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
+        writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
         if (!refresh() && hdr_ == HdrState::Active)
             MessageBoxW(nullptr, error_.c_str(), title, MB_OK | MB_ICONWARNING);
-        writeStartupLog(L"run: adding icon");
+        writeTrace(L"run: adding icon");
         if (!addIcon()) fail(L"Add tray icon");
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
         restoreLastMode();
         PostMessageW(hwnd_, initMessage, 0, 0);
-        writeStartupLog(L"run: message loop");
+        writeTrace(L"run: message loop");
 
         MSG msg{};
         int status;
@@ -438,28 +412,31 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    writeBootTrace();
-    writeStartupLog(startupContext());
+    writeTrace(startupContext());
+    writeTrace(L"settingsFile=" + settingsFile());
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            writeStartupLog(L"exit: another instance is running");
+            writeTrace(L"exit: another instance is running");
             return 0;
         }
-        writeStartupLog(L"instance lock acquired");
+        writeTrace(L"instance lock acquired");
         Tray tray(instance);
-        writeStartupLog(L"tray constructed");
-        return tray.run(instance);
+        writeTrace(L"tray constructed");
+        const int code = tray.run(instance);
+        writeTrace(L"run returned " + std::to_wstring(code));
+        return code;
     } catch (const Failure& error) {
-        writeStartupLog(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
+        writeTrace(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
         const int box = MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
-        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
+        writeTrace(L"failure: message box returned " + std::to_wstring(box));
     } catch (...) {
-        writeStartupLog(L"failure: unknown");
+        writeTrace(L"failure: unknown");
         const int box = MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
-        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
+        writeTrace(L"failure: message box returned " + std::to_wstring(box));
     }
+    writeTrace(L"exit 1");
     return 1;
 }
 
