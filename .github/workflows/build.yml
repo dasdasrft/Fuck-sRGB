@@ -1,0 +1,31 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Compile
+        shell: cmd
+        run: |
+          rc /nologo sdr-gamma.rc
+          cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.0.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fuck-sRGB-1.2.0
+          path: Fuck-sRGB-1.2.0.exe
+          if-no-files-found: error
