@@ -50,6 +50,50 @@ std::wstring startupContext() {
            L" elevated=" + (elevated ? L"true" : L"false");
 }
 
+// Temporary diagnostic: a fixed path written with CreateFileW, so it does not
+// depend on the environment block or the filesystem library.
+void writeBootTrace() {
+    DWORD session = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &session);
+    wchar_t station[128] = L"?";
+    if (HWINSTA winsta = GetProcessWindowStation())
+        GetUserObjectInformationW(winsta, UOI_NAME, station, sizeof(station), nullptr);
+    wchar_t local[256] = L"?";
+    GetEnvironmentVariableW(L"LOCALAPPDATA", local, ARRAYSIZE(local));
+    bool elevated = false;
+    DWORD integrity = 0;
+    if (HANDLE token = nullptr; OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        TOKEN_ELEVATION info{};
+        DWORD size = sizeof(info);
+        if (GetTokenInformation(token, TokenElevation, &info, size, &size))
+            elevated = info.TokenIsElevated != 0;
+        DWORD needed = 0;
+        GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &needed);
+        if (needed) {
+            std::vector<Byte> buffer(needed);
+            if (GetTokenInformation(token, TokenIntegrityLevel, buffer.data(), needed, &needed)) {
+                const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(buffer.data());
+                const auto count = *GetSidSubAuthorityCount(label->Label.Sid);
+                integrity = *GetSidSubAuthority(label->Label.Sid, count - 1);
+            }
+        }
+        CloseHandle(token);
+    }
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t line[1024] = {};
+    swprintf_s(line, L"%04u-%02u-%02u %02u:%02u:%02u pid=%lu session=%lu elevated=%d integrity=0x%04X station=%ls localappdata=%ls\r\n",
+               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+               GetCurrentProcessId(), session, elevated ? 1 : 0, integrity, station, local);
+    HANDLE file = CreateFileW(L"C:\\Users\\26076\\Desktop\\123\\boottrace.txt", FILE_APPEND_DATA,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, line, static_cast<DWORD>(wcslen(line) * sizeof(wchar_t)), &written, nullptr);
+    CloseHandle(file);
+}
+
 class Tray {
 public:
     explicit Tray(HINSTANCE instance) : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))) {
@@ -394,6 +438,7 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    writeBootTrace();
     writeStartupLog(startupContext());
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
