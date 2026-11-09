@@ -105,10 +105,16 @@ public:
         }
         hdr_ = detectHdr();
         writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
-        if (!refresh() && hdr_ == HdrState::Active)
-            MessageBoxW(nullptr, error_.c_str(), title, MB_OK | MB_ICONWARNING);
+        // The inspection result is reported through the tooltip and the log. A
+        // modal warning here would block the message loop when the tray is
+        // started by the Task Scheduler, so the icon has to be added first.
+        const bool inspected = refresh();
+        writeTrace(L"run: refresh=" + std::to_wstring(inspected ? 1 : 0) + L" error=" + error_);
         writeTrace(L"run: adding icon");
-        if (!addIcon()) fail(L"Add tray icon");
+        if (!addIcon()) {
+            writeTrace(L"add icon failed code=" + std::to_wstring(GetLastError()));
+            fail(L"Add tray icon");
+        }
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
         restoreLastMode();
