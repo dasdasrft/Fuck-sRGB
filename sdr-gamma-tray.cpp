@@ -32,6 +32,24 @@ std::wstring errorText(Failure failure) {
     return std::wstring(failure.operation) + code;
 }
 
+std::wstring startupContext() {
+    DWORD session = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &session);
+    wchar_t station[128] = L"?";
+    if (HWINSTA handle = GetProcessWindowStation())
+        GetUserObjectInformationW(handle, UOI_NAME, station, sizeof(station), nullptr);
+    bool elevated = false;
+    if (HANDLE token = nullptr; OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        TOKEN_ELEVATION info{};
+        DWORD size = sizeof(info);
+        if (GetTokenInformation(token, TokenElevation, &info, size, &size))
+            elevated = info.TokenIsElevated != 0;
+        CloseHandle(token);
+    }
+    return L"start session=" + std::to_wstring(session) + L" station=" + station +
+           L" elevated=" + (elevated ? L"true" : L"false");
+}
+
 class Tray {
 public:
     explicit Tray(HINSTANCE instance) : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))) {
@@ -39,9 +57,10 @@ public:
     }
 
     int run(HINSTANCE instance) {
+        writeStartupLog(L"run: registering window class");
         taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
         if (!taskbarCreated_) fail(L"Register taskbar message");
-
+        writeStartupLog(L"run: creating window");
         WNDCLASSW wc{};
         wc.hInstance = instance;
         wc.lpfnWndProc = procedure;
@@ -52,17 +71,21 @@ public:
                                 0, 0, 0, 0, nullptr, nullptr, instance, this);
         if (!hwnd_) fail(L"Create tray window");
 
+        writeStartupLog(L"run: filtering messages");
         if (!ChangeWindowMessageFilterEx(hwnd_, iconMessage, MSGFLT_ALLOW, nullptr) ||
             !ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr))
             fail(L"Connect to the Windows taskbar");
         hdr_ = detectHdr();
+        writeStartupLog(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
         if (!refresh() && hdr_ == HdrState::Active)
             MessageBoxW(nullptr, error_.c_str(), title, MB_OK | MB_ICONWARNING);
+        writeStartupLog(L"run: adding icon");
         if (!addIcon()) fail(L"Add tray icon");
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
         restoreLastMode();
         PostMessageW(hwnd_, initMessage, 0, 0);
+        writeStartupLog(L"run: message loop");
 
         MSG msg{};
         int status;
@@ -371,16 +394,26 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    writeStartupLog(startupContext());
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
-        if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+        if (GetLastError() == ERROR_ALREADY_EXISTS) {
+            writeStartupLog(L"exit: another instance is running");
+            return 0;
+        }
+        writeStartupLog(L"instance lock acquired");
         Tray tray(instance);
+        writeStartupLog(L"tray constructed");
         return tray.run(instance);
     } catch (const Failure& error) {
-        MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
+        writeStartupLog(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
+        const int box = MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
+        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
     } catch (...) {
-        MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
+        writeStartupLog(L"failure: unknown");
+        const int box = MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
+        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
     }
     return 1;
 }

@@ -55,6 +55,30 @@ inline Mode loadSavedMode() {
     return stored < selectableCount ? static_cast<Mode>(stored) : Mode::Srgb;
 }
 
+// Appends to %LOCALAPPDATA%\Fuck-sRGB\startup.log. The tray can be started by
+// the Task Scheduler, where a MessageBox either blocks invisibly or fails
+// outright, so startup diagnostics have to go to the file.
+inline void writeStartupLog(const std::wstring& text) {
+    const auto ini = settingsFile();
+    if (ini.empty()) return;
+    const std::filesystem::path path = std::filesystem::path(ini).parent_path() / L"startup.log";
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+    wchar_t stamp[80] = {};
+    swprintf_s(stamp, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%lu] ",
+               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+               now.wMilliseconds, GetCurrentProcessId());
+    const std::wstring line = std::wstring(stamp) + text + L"\n";
+    const int size = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()),
+                                         nullptr, 0, nullptr, nullptr);
+    if (size <= 0) return;
+    std::string utf8(static_cast<size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()),
+                        utf8.data(), size, nullptr, nullptr);
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    if (out) out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+}
+
 inline void saveMode(Mode mode) {
     if (index(mode) >= selectableCount) return;
     const auto file = settingsFile();
