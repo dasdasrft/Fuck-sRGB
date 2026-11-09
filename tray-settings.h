@@ -1,5 +1,7 @@
 #pragma once
 
+#include <sddl.h>
+
 // Per-user persistence for the tray.
 //
 // The last selected gamma mode lives in %LOCALAPPDATA%\Fuck-sRGB\settings.ini.
@@ -126,19 +128,131 @@ inline bool autoStartEnabled() {
     return scheduledTaskExists() || runEntryExists();
 }
 
-// A logon task with RL HIGHEST starts the tray without a UAC prompt, which a
-// Run entry cannot do because the executable is manifested requireAdministrator.
-// The Run entry remains as a fallback for systems where task creation is blocked.
+inline std::wstring xmlText(const std::wstring& text) {
+    std::wstring out;
+    out.reserve(text.size());
+    for (const wchar_t character : text) {
+        switch (character) {
+        case L'&': out += L"&amp;"; break;
+        case L'<': out += L"&lt;"; break;
+        case L'>': out += L"&gt;"; break;
+        case L'"': out += L"&quot;"; break;
+        default: out += character; break;
+        }
+    }
+    return out;
+}
+
+inline std::wstring currentUserSid() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return {};
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::wstring result;
+    if (size) {
+        std::vector<Byte> buffer(size);
+        if (GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
+            const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
+            wchar_t* text = nullptr;
+            if (ConvertSidToStringSidW(user->User.Sid, &text)) {
+                result = text;
+                LocalFree(text);
+            }
+        }
+    }
+    CloseHandle(token);
+    return result;
+}
+
+// A task definition is used instead of /TR because the command line form either
+// stores the path with literal quotes or truncates it at the first space, and
+// because it can also lift the default battery and run-time limits.
+inline std::wstring logonTaskXml(const std::wstring& executable, const std::wstring& sid) {
+    const std::wstring path = xmlText(executable);
+    const std::wstring user = xmlText(sid);
+    return L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"
+           L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
+           L"  <RegistrationInfo>\n"
+           L"    <Description>Starts Fuck sRGB at logon without a UAC prompt.</Description>\n"
+           L"  </RegistrationInfo>\n"
+           L"  <Triggers>\n"
+           L"    <LogonTrigger>\n"
+           L"      <Enabled>true</Enabled>\n"
+           L"      <UserId>" + user + L"</UserId>\n"
+           L"    </LogonTrigger>\n"
+           L"  </Triggers>\n"
+           L"  <Principals>\n"
+           L"    <Principal id=\"Author\">\n"
+           L"      <UserId>" + user + L"</UserId>\n"
+           L"      <LogonType>InteractiveToken</LogonType>\n"
+           L"      <RunLevel>HighestAvailable</RunLevel>\n"
+           L"    </Principal>\n"
+           L"  </Principals>\n"
+           L"  <Settings>\n"
+           L"    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n"
+           L"    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
+           L"    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n"
+           L"    <AllowHardTerminate>true</AllowHardTerminate>\n"
+           L"    <StartWhenAvailable>true</StartWhenAvailable>\n"
+           L"    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n"
+           L"    <IdleSettings>\n"
+           L"      <StopOnIdleEnd>false</StopOnIdleEnd>\n"
+           L"      <RestartOnIdle>false</RestartOnIdle>\n"
+           L"    </IdleSettings>\n"
+           L"    <AllowStartOnDemand>true</AllowStartOnDemand>\n"
+           L"    <Enabled>true</Enabled>\n"
+           L"    <Hidden>false</Hidden>\n"
+           L"    <RunOnlyIfIdle>false</RunOnlyIfIdle>\n"
+           L"    <WakeToRun>false</WakeToRun>\n"
+           L"    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n"
+           L"    <Priority>7</Priority>\n"
+           L"  </Settings>\n"
+           L"  <Actions Context=\"Author\">\n"
+           L"    <Exec>\n"
+           L"      <Command>" + path + L"</Command>\n"
+           L"    </Exec>\n"
+           L"  </Actions>\n"
+           L"</Task>\n";
+}
+
+inline bool createLogonTask(const std::wstring& executable) {
+    const auto sid = currentUserSid();
+    if (sid.empty()) return false;
+    wchar_t folder[MAX_PATH * 2] = {};
+    if (!GetTempPathW(ARRAYSIZE(folder), folder)) return false;
+    const std::wstring file = std::wstring(folder) + L"Fuck-sRGB-task-" +
+                              std::to_wstring(GetCurrentProcessId()) + L".xml";
+    const std::wstring xml = logonTaskXml(executable, sid);
+    {
+        std::ofstream out(std::filesystem::path{file}, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        const unsigned char bom[] = {0xFF, 0xFE};
+        out.write(reinterpret_cast<const char*>(bom), sizeof(bom));
+        out.write(reinterpret_cast<const char*>(xml.data()),
+                  static_cast<std::streamsize>(xml.size() * sizeof(wchar_t)));
+        if (!out) { out.close(); std::error_code ignored; std::filesystem::remove(file, ignored); return false; }
+    }
+    DWORD code = 1;
+    const std::wstring create = std::wstring(L"schtasks.exe /Create /TN \"") + autoTaskName +
+                                L"\" /XML \"" + file + L"\" /F";
+    const bool created = runAndWait(create, code) && code == 0;
+    std::error_code ignored;
+    std::filesystem::remove(file, ignored);
+    return created;
+}
+
+// Re-registers the task on every call, which also repairs an entry written by an
+// older build that stored the executable path with literal quotes. A Run entry
+// is only added when no other start-at-logon entry exists, because it cannot
+// start a requireAdministrator executable without a UAC prompt.
 inline bool enableAutoStart() {
     const auto executable = executablePath();
     if (executable.empty()) return false;
-    DWORD code = 1;
-    const std::wstring create = std::wstring(L"schtasks.exe /Create /TN \"") + autoTaskName +
-                                L"\" /TR \"\\\"" + executable + L"\\\"\" /SC ONLOGON /RL HIGHEST /F";
-    if (runAndWait(create, code) && code == 0) {
+    if (createLogonTask(executable)) {
         deleteRunEntry();
         return true;
     }
+    if (scheduledTaskExists() || runEntryExists()) return true;
     return writeRunEntry(executable);
 }
 

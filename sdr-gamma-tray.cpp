@@ -304,8 +304,10 @@ private:
         }
         case initMessage:
             // Queried from the message loop so a slow task query cannot delay
-            // the tray icon.
+            // the tray icon. An existing entry is rewritten so a stale or
+            // malformed task from an older build repairs itself.
             autoStart_ = autoStartEnabled();
+            if (autoStart_) autoStart_ = enableAutoStart();
             return 0;
         case doneMessage:
             if (!worker_.joinable()) return 0;
