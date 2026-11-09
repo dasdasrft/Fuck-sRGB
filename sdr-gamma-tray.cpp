@@ -90,9 +90,19 @@ public:
         if (!hwnd_) fail(L"Create tray window");
 
         writeTrace(L"run: filtering messages");
+        // Explorer runs at medium integrity while this process runs elevated, so
+        // the taskbar messages have to pass UIPI. A tray started by the Task
+        // Scheduler rejects the per-window form with ERROR_ACCESS_DENIED, so fall
+        // back to the process-wide filter, which only needs elevation, and never
+        // treat the failure as fatal: the icon and the menu are still useful when
+        // Explorer cannot reach this window.
         if (!ChangeWindowMessageFilterEx(hwnd_, iconMessage, MSGFLT_ALLOW, nullptr) ||
-            !ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr))
-            fail(L"Connect to the Windows taskbar");
+            !ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr)) {
+            writeTrace(L"filter ex failed code=" + std::to_wstring(GetLastError()));
+            if (!ChangeWindowMessageFilter(iconMessage, MSGFLT_ADD) ||
+                !ChangeWindowMessageFilter(taskbarCreated_, MSGFLT_ADD))
+                writeTrace(L"filter global failed code=" + std::to_wstring(GetLastError()));
+        }
         hdr_ = detectHdr();
         writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
         if (!refresh() && hdr_ == HdrState::Active)
