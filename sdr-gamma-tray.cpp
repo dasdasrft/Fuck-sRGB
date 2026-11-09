@@ -133,6 +133,7 @@ private:
     bool busy_ = false;
     bool autoStart_ = false;
     bool restored_ = false;
+    bool changeDwm_ = false;
     Mode persisted_ = Mode::Srgb;
     bool switching_ = false;
     EdgeSyncStatus edgeStatus_{};
@@ -288,8 +289,11 @@ private:
     void startWork(Mode mode, bool changeDwm) {
         if (busy_) return;
         const auto before = current_;
-        writeStartupLog(L"startWork mode=" + std::to_wstring(index(mode)) +
-                        L" changeDwm=" + std::to_wstring(changeDwm ? 1 : 0));
+        changeDwm_ = changeDwm;
+        // The two-second monitor calls this with changeDwm=false; logging every
+        // poll would fill the log with noise and rotate the useful lines away.
+        if (changeDwm)
+            writeStartupLog(L"startWork mode=" + std::to_wstring(index(mode)) + L" changeDwm=1");
         busy_ = true;
         switching_ = changeDwm;
         workerError_.clear();
@@ -390,10 +394,11 @@ private:
                         persisted_ = current_.mode;
                     }
                 }
-                writeStartupLog(L"done: mode=" + std::to_wstring(index(current_.mode)) +
-                                L" edge synced=" + std::to_wstring(edgeStatus_.synced) +
-                                L" waiting=" + std::to_wstring(edgeStatus_.waiting) +
-                                L" skipped=" + std::to_wstring(edgeStatus_.skipped));
+                if (changeDwm_)
+                    writeStartupLog(L"done: mode=" + std::to_wstring(index(current_.mode)) +
+                                    L" edge synced=" + std::to_wstring(edgeStatus_.synced) +
+                                    L" waiting=" + std::to_wstring(edgeStatus_.waiting) +
+                                    L" skipped=" + std::to_wstring(edgeStatus_.skipped));
                 updateTooltip();
             } else {
                 refresh();

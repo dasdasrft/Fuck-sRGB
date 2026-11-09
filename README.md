@@ -31,7 +31,7 @@ The tray records the curve it last applied in `%LOCALAPPDATA%\Fuck-sRGB\settings
 
 The executable is not code-signed, so Windows can ask twice before the tray appears:
 
-1. **Open File - Security Warning** ("The publisher could not be verified"). This dialog only appears for files carrying a Mark of the Web, which is what a browser download produces. A build copied from a build artifact does not carry it. If you do see it, `Unblock-File -Path .\Fuck-sRGB-1.3.0.exe` removes the mark, or just click **Run**.
+1. **Open File - Security Warning** ("The publisher could not be verified"). This dialog only appears for files carrying a Mark of the Web, which is what a browser download produces. A build copied from a build artifact does not carry it. If you do see it, `Unblock-File -Path .\Fuck-sRGB-1.3.1.exe` removes the mark, or just click **Run**.
 2. **User Account Control.** The tray patches DWM, so it needs an elevated process. The manifest is `highestAvailable` and the logon entry is an `HKCU` Run value, so Windows asks once at sign-in and then starts the tray exactly as a manual launch would.
 
 Clicking the executable a second time while the tray is already running does not start a second copy: the running instance opens its own menu so the existing tray becomes visible. Every start, exit and mode change is appended to `%LOCALAPPDATA%\Fuck-sRGB\startup.log`.
@@ -75,12 +75,12 @@ Use an x64 MSVC developer command prompt with a recent Windows SDK. Run these co
 
 ```bat
 rc /nologo sdr-gamma.rc
-cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.3.0.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.3.1.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 ```
 
 The headers `tray-patch-plan.h`, `edge-gamma-plan.h` and `tray-settings.h` supply the DWM shader signatures, Edge patch data and the per-user settings and start-at-logon handling.
 
-The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.3.0.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
+The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.3.1.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
 
 ## Acknowledgments
 
