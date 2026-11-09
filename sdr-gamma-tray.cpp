@@ -6,6 +6,7 @@ constexpr wchar_t windowClass[] = L"Codex.SdrGamma.Tray.1";
 constexpr UINT trayId = 1;
 constexpr UINT iconMessage = WM_APP + 1;
 constexpr UINT doneMessage = WM_APP + 2;
+constexpr UINT initMessage = WM_APP + 3;
 constexpr UINT firstMode = 100;
 constexpr UINT exitCommand = 110;
 constexpr UINT autoStartCommand = 111;
@@ -60,8 +61,8 @@ public:
         if (!addIcon()) fail(L"Add tray icon");
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
-        autoStart_ = autoStartEnabled();
         restoreLastMode();
+        PostMessageW(hwnd_, initMessage, 0, 0);
 
         MSG msg{};
         int status;
@@ -301,6 +302,11 @@ private:
                 DestroyWindow(hwnd_);
             return 0;
         }
+        case initMessage:
+            // Queried from the message loop so a slow task query cannot delay
+            // the tray icon.
+            autoStart_ = autoStartEnabled();
+            return 0;
         case doneMessage:
             if (!worker_.joinable()) return 0;
             worker_.join();
