@@ -66,12 +66,12 @@ Use an x64 MSVC developer command prompt with a recent Windows SDK. Run these co
 
 ```bat
 rc /nologo sdr-gamma.rc
-cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.2.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.3.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 ```
 
 The headers `tray-patch-plan.h`, `edge-gamma-plan.h` and `tray-settings.h` supply the DWM shader signatures, Edge patch data and the per-user settings and start-at-logon handling.
 
-The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.2.2.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
+The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.2.3.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
 
 ## Acknowledgments
 
