@@ -68,6 +68,48 @@ void writeTrace(const std::wstring& text) {
     CloseHandle(file);
 }
 
+std::wstring desktopName() {
+    wchar_t name[128] = L"?";
+    if (HDESK desk = GetThreadDesktop(GetCurrentThreadId()))
+        GetUserObjectInformationW(desk, UOI_NAME, name, sizeof(name), nullptr);
+    return name;
+}
+
+bool isTokenAdmin() {
+    BYTE sid[SECURITY_MAX_SID_SIZE] = {};
+    DWORD size = sizeof(sid);
+    if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, sid, &size)) return false;
+    BOOL member = FALSE;
+    return CheckTokenMembership(nullptr, sid, &member) && member;
+}
+
+struct TokenSummary {
+    DWORD groups{};
+    DWORD privileges{};
+};
+
+TokenSummary tokenSummary() {
+    TokenSummary summary;
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return summary;
+    DWORD size = 0;
+    GetTokenInformation(token, TokenGroups, nullptr, 0, &size);
+    if (size) {
+        std::vector<Byte> buffer(size);
+        if (GetTokenInformation(token, TokenGroups, buffer.data(), size, &size))
+            summary.groups = reinterpret_cast<const TOKEN_GROUPS*>(buffer.data())->GroupCount;
+    }
+    size = 0;
+    GetTokenInformation(token, TokenPrivileges, nullptr, 0, &size);
+    if (size) {
+        std::vector<Byte> buffer(size);
+        if (GetTokenInformation(token, TokenPrivileges, buffer.data(), size, &size))
+            summary.privileges = reinterpret_cast<const TOKEN_PRIVILEGES*>(buffer.data())->PrivilegeCount;
+    }
+    CloseHandle(token);
+    return summary;
+}
+
 class Tray {
 public:
     explicit Tray(HINSTANCE instance) : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))) {
@@ -104,7 +146,16 @@ public:
                 writeTrace(L"filter global failed code=" + std::to_wstring(GetLastError()));
         }
         hdr_ = detectHdr();
-        writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)));
+        {
+            const auto summary = tokenSummary();
+            writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)) +
+                       L" desktop=" + desktopName() +
+                       L" admin=" + (isTokenAdmin() ? L"1" : L"0") +
+                       L" groups=" + std::to_wstring(summary.groups) +
+                       L" privs=" + std::to_wstring(summary.privileges) +
+                       L" dwm=" + std::to_wstring(currentDwm(patcher_.session)) +
+                       L" dwmProcs=" + std::to_wstring(processesNamed(L"dwm.exe").size()));
+        }
         // The inspection result is reported through the tooltip and the log. A
         // modal warning here would block the message loop when the tray is
         // started by the Task Scheduler, so the icon has to be added first.
