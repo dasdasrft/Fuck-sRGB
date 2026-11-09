@@ -1,7 +1,5 @@
 #pragma once
 
-#include <sddl.h>
-
 // Per-user persistence for the tray.
 //
 // The last selected gamma mode lives in %LOCALAPPDATA%\Fuck-sRGB\settings.ini.
@@ -9,9 +7,15 @@
 // survives an executable in Program Files, an elevated working directory and
 // DWM restarts, and that a later run can reapply the selection at logon.
 //
-// Start-at-logon is owned by the operating system (a per-user logon task, or an
-// HKCU Run value when the task cannot be created) rather than by the INI file,
-// so the menu always reflects what the system will actually do at logon.
+// Start-at-logon uses the HKCU Run value, the same mechanism a non-elevated
+// application would use. A logon task is deliberately not used: a task at the
+// highest run level creates its process with a window station the shell cannot
+// reach, so Shell_NotifyIcon, ChangeWindowMessageFilter and process enumeration
+// all fail with ERROR_ACCESS_DENIED and the tray never appears. The executable
+// is manifested highestAvailable, so Windows asks for elevation once at logon
+// and the tray then runs with the same rights as a manually started instance.
+//
+// Tasks written by the earlier 1.2.x builds are removed on sight.
 
 constexpr wchar_t settingsSection[] = L"tray";
 constexpr wchar_t settingsModeKey[] = L"lastMode";
@@ -55,28 +59,37 @@ inline Mode loadSavedMode() {
     return stored < selectableCount ? static_cast<Mode>(stored) : Mode::Srgb;
 }
 
-// Appends to %LOCALAPPDATA%\Fuck-sRGB\startup.log. The tray can be started by
-// the Task Scheduler, where a MessageBox either blocks invisibly or fails
-// outright, so startup diagnostics have to go to the file.
+// Appends to %LOCALAPPDATA%\Fuck-sRGB\startup.log with plain Win32 file calls.
+// A tray started from the Run key cannot always show a modal error, so the
+// reason for a failed start has to reach a file instead.
 inline void writeStartupLog(const std::wstring& text) {
     const auto ini = settingsFile();
     if (ini.empty()) return;
-    const std::filesystem::path path = std::filesystem::path(ini).parent_path() / L"startup.log";
+    const std::wstring path = (std::filesystem::path(ini).parent_path() / L"startup.log").wstring();
+    HANDLE probe = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (probe != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER size{};
+        if (GetFileSizeEx(probe, &size) && size.QuadPart > 256 * 1024) {
+            CloseHandle(probe);
+            DeleteFileW(path.c_str());
+        } else {
+            CloseHandle(probe);
+        }
+    }
     SYSTEMTIME now{};
     GetLocalTime(&now);
     wchar_t stamp[80] = {};
     swprintf_s(stamp, L"%04u-%02u-%02u %02u:%02u:%02u.%03u [%lu] ",
                now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
                now.wMilliseconds, GetCurrentProcessId());
-    const std::wstring line = std::wstring(stamp) + text + L"\n";
-    const int size = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()),
-                                         nullptr, 0, nullptr, nullptr);
-    if (size <= 0) return;
-    std::string utf8(static_cast<size_t>(size), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()),
-                        utf8.data(), size, nullptr, nullptr);
-    std::ofstream out(path, std::ios::binary | std::ios::app);
-    if (out) out.write(utf8.data(), static_cast<std::streamsize>(utf8.size()));
+    const std::wstring line = std::wstring(stamp) + text + L"\r\n";
+    HANDLE file = CreateFileW(path.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written = 0;
+    WriteFile(file, line.c_str(), static_cast<DWORD>(line.size() * sizeof(wchar_t)), &written, nullptr);
+    CloseHandle(file);
 }
 
 inline void saveMode(Mode mode) {
@@ -116,6 +129,12 @@ inline bool scheduledTaskExists() {
     return runAndWait(std::wstring(L"schtasks.exe /Query /TN \"") + autoTaskName + L"\"", code) && code == 0;
 }
 
+inline void deleteScheduledTask() {
+    if (!scheduledTaskExists()) return;
+    DWORD code = 1;
+    runAndWait(std::wstring(L"schtasks.exe /Delete /TN \"") + autoTaskName + L"\" /F", code);
+}
+
 inline bool runEntryExists() {
     HKEY key{};
     if (RegOpenKeyExW(HKEY_CURRENT_USER, autoRunKey, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
@@ -149,139 +168,20 @@ inline void deleteRunEntry() {
 }
 
 inline bool autoStartEnabled() {
-    return scheduledTaskExists() || runEntryExists();
+    // A leftover task also counts as enabled so the upgrade path can remove it.
+    return runEntryExists() || scheduledTaskExists();
 }
 
-inline std::wstring xmlText(const std::wstring& text) {
-    std::wstring out;
-    out.reserve(text.size());
-    for (const wchar_t character : text) {
-        switch (character) {
-        case L'&': out += L"&amp;"; break;
-        case L'<': out += L"&lt;"; break;
-        case L'>': out += L"&gt;"; break;
-        case L'"': out += L"&quot;"; break;
-        default: out += character; break;
-        }
-    }
-    return out;
-}
-
-inline std::wstring currentUserSid() {
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return {};
-    DWORD size = 0;
-    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-    std::wstring result;
-    if (size) {
-        std::vector<Byte> buffer(size);
-        if (GetTokenInformation(token, TokenUser, buffer.data(), size, &size)) {
-            const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
-            wchar_t* text = nullptr;
-            if (ConvertSidToStringSidW(user->User.Sid, &text)) {
-                result = text;
-                LocalFree(text);
-            }
-        }
-    }
-    CloseHandle(token);
-    return result;
-}
-
-// A task definition is used instead of /TR because the command line form either
-// stores the path with literal quotes or truncates it at the first space, and
-// because it can also lift the default battery and run-time limits.
-inline std::wstring logonTaskXml(const std::wstring& executable, const std::wstring& sid) {
-    const std::wstring path = xmlText(executable);
-    const std::wstring user = xmlText(sid);
-    return L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"
-           L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
-           L"  <RegistrationInfo>\n"
-           L"    <Description>Starts Fuck sRGB at logon without a UAC prompt.</Description>\n"
-           L"  </RegistrationInfo>\n"
-           L"  <Triggers>\n"
-           L"    <LogonTrigger>\n"
-           L"      <Enabled>true</Enabled>\n"
-           L"      <UserId>" + user + L"</UserId>\n"
-           L"    </LogonTrigger>\n"
-           L"  </Triggers>\n"
-           L"  <Principals>\n"
-           L"    <Principal id=\"Author\">\n"
-           L"      <UserId>" + user + L"</UserId>\n"
-           L"      <LogonType>InteractiveToken</LogonType>\n"
-           L"      <RunLevel>HighestAvailable</RunLevel>\n"
-           L"    </Principal>\n"
-           L"  </Principals>\n"
-           L"  <Settings>\n"
-           L"    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n"
-           L"    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
-           L"    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n"
-           L"    <AllowHardTerminate>true</AllowHardTerminate>\n"
-           L"    <StartWhenAvailable>true</StartWhenAvailable>\n"
-           L"    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n"
-           L"    <IdleSettings>\n"
-           L"      <StopOnIdleEnd>false</StopOnIdleEnd>\n"
-           L"      <RestartOnIdle>false</RestartOnIdle>\n"
-           L"    </IdleSettings>\n"
-           L"    <AllowStartOnDemand>true</AllowStartOnDemand>\n"
-           L"    <Enabled>true</Enabled>\n"
-           L"    <Hidden>false</Hidden>\n"
-           L"    <RunOnlyIfIdle>false</RunOnlyIfIdle>\n"
-           L"    <WakeToRun>false</WakeToRun>\n"
-           L"    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n"
-           L"    <Priority>7</Priority>\n"
-           L"  </Settings>\n"
-           L"  <Actions Context=\"Author\">\n"
-           L"    <Exec>\n"
-           L"      <Command>" + path + L"</Command>\n"
-           L"    </Exec>\n"
-           L"  </Actions>\n"
-           L"</Task>\n";
-}
-
-inline bool createLogonTask(const std::wstring& executable) {
-    const auto sid = currentUserSid();
-    if (sid.empty()) return false;
-    wchar_t folder[MAX_PATH * 2] = {};
-    if (!GetTempPathW(ARRAYSIZE(folder), folder)) return false;
-    const std::wstring file = std::wstring(folder) + L"Fuck-sRGB-task-" +
-                              std::to_wstring(GetCurrentProcessId()) + L".xml";
-    const std::wstring xml = logonTaskXml(executable, sid);
-    {
-        std::ofstream out(std::filesystem::path{file}, std::ios::binary | std::ios::trunc);
-        if (!out) return false;
-        const unsigned char bom[] = {0xFF, 0xFE};
-        out.write(reinterpret_cast<const char*>(bom), sizeof(bom));
-        out.write(reinterpret_cast<const char*>(xml.data()),
-                  static_cast<std::streamsize>(xml.size() * sizeof(wchar_t)));
-        if (!out) { out.close(); std::error_code ignored; std::filesystem::remove(file, ignored); return false; }
-    }
-    DWORD code = 1;
-    const std::wstring create = std::wstring(L"schtasks.exe /Create /TN \"") + autoTaskName +
-                                L"\" /XML \"" + file + L"\" /F";
-    const bool created = runAndWait(create, code) && code == 0;
-    std::error_code ignored;
-    std::filesystem::remove(file, ignored);
-    return created;
-}
-
-// Re-registers the task on every call, which also repairs an entry written by an
-// older build that stored the executable path with literal quotes. A Run entry
-// is only added when no other start-at-logon entry exists, because it cannot
-// start a requireAdministrator executable without a UAC prompt.
+// Rewrites the Run value on every call, which repairs a stale path after the
+// executable moves, and drops the unusable logon task from older builds.
 inline bool enableAutoStart() {
     const auto executable = executablePath();
     if (executable.empty()) return false;
-    if (createLogonTask(executable)) {
-        deleteRunEntry();
-        return true;
-    }
-    if (scheduledTaskExists() || runEntryExists()) return true;
-    return writeRunEntry(executable);
+    deleteScheduledTask();
+    return writeRunEntry(L"\"" + executable + L"\"");
 }
 
 inline void disableAutoStart() {
-    DWORD code = 1;
-    runAndWait(std::wstring(L"schtasks.exe /Delete /TN \"") + autoTaskName + L"\" /F", code);
     deleteRunEntry();
+    deleteScheduledTask();
 }

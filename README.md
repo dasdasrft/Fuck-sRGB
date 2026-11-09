@@ -27,7 +27,7 @@ All active displays must be in HDR mode to enable the curve controls. If HDR is 
 
 The tray records the curve it last applied in `%LOCALAPPDATA%\Fuck-sRGB\settings.ini` and reapplies it on the next start. A newly created DWM instance always runs the native shaders, so restoring **Gamma2.2**, **Gamma2.4** or **Linear** patches it during startup, which restarts DWM once and can briefly blank the screen. Selecting **Native** and exiting keeps the next start silent, and an unchanged selection never restarts DWM again.
 
-**Start with Windows** creates the per-user logon task `Fuck sRGB` at the highest run level, so the tray starts at sign-in without a UAC prompt. The task is imported from a task definition rather than built from `schtasks` switches: the switch form either stores the executable path with literal quotes, which fails to start, or truncates it at the first space. The definition also allows a start on battery power and removes the default 72-hour run-time limit. The task is rewritten on every start, so moving the executable or upgrading from a build that wrote a malformed task repairs itself. If the task cannot be created, the tray falls back to the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, which does prompt for elevation. Turning the item off removes both forms.
+**Start with Windows** writes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, holding the quoted executable path. That is the same mechanism a tray without an elevation requirement uses. A logon task at the highest run level is not usable here: the process it creates runs elevated but cannot reach the desktop's window station, so `Shell_NotifyIcon`, `ChangeWindowMessageFilter` and even process enumeration fail with `ERROR_ACCESS_DENIED` and no icon appears. Because the executable is manifested `highestAvailable`, Windows shows one UAC prompt at sign-in and the tray then behaves exactly like a manually started instance. The value is rewritten on every start, so moving the executable repairs the entry and a task left behind by 1.2.0-1.2.8 is removed. Turning the item off removes both forms.
 
 ### Compatibility
 
@@ -66,12 +66,12 @@ Use an x64 MSVC developer command prompt with a recent Windows SDK. Run these co
 
 ```bat
 rc /nologo sdr-gamma.rc
-cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.8.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.9.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 ```
 
 The headers `tray-patch-plan.h`, `edge-gamma-plan.h` and `tray-settings.h` supply the DWM shader signatures, Edge patch data and the per-user settings and start-at-logon handling.
 
-The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.2.8.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
+The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.2.9.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
 
 ## Acknowledgments
 

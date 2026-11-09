@@ -50,66 +50,6 @@ std::wstring startupContext() {
            L" elevated=" + (elevated ? L"true" : L"false");
 }
 
-// Temporary diagnostic: a fixed path written with CreateFileW, so it does not
-// depend on the environment block or the filesystem library.
-void writeTrace(const std::wstring& text) {
-    SYSTEMTIME now{};
-    GetLocalTime(&now);
-    wchar_t line[2048] = {};
-    swprintf_s(line, L"%02u:%02u:%02u.%03u pid=%lu %ls\r\n",
-               now.wHour, now.wMinute, now.wSecond, now.wMilliseconds,
-               GetCurrentProcessId(), text.c_str());
-    HANDLE file = CreateFileW(L"C:\\Users\\26076\\Desktop\\123\\boottrace.txt", FILE_APPEND_DATA,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE) return;
-    DWORD written = 0;
-    WriteFile(file, line, static_cast<DWORD>(wcslen(line) * sizeof(wchar_t)), &written, nullptr);
-    CloseHandle(file);
-}
-
-std::wstring desktopName() {
-    wchar_t name[128] = L"?";
-    if (HDESK desk = GetThreadDesktop(GetCurrentThreadId()))
-        GetUserObjectInformationW(desk, UOI_NAME, name, sizeof(name), nullptr);
-    return name;
-}
-
-bool isTokenAdmin() {
-    BYTE sid[SECURITY_MAX_SID_SIZE] = {};
-    DWORD size = sizeof(sid);
-    if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, sid, &size)) return false;
-    BOOL member = FALSE;
-    return CheckTokenMembership(nullptr, sid, &member) && member;
-}
-
-struct TokenSummary {
-    DWORD groups{};
-    DWORD privileges{};
-};
-
-TokenSummary tokenSummary() {
-    TokenSummary summary;
-    HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return summary;
-    DWORD size = 0;
-    GetTokenInformation(token, TokenGroups, nullptr, 0, &size);
-    if (size) {
-        std::vector<Byte> buffer(size);
-        if (GetTokenInformation(token, TokenGroups, buffer.data(), size, &size))
-            summary.groups = reinterpret_cast<const TOKEN_GROUPS*>(buffer.data())->GroupCount;
-    }
-    size = 0;
-    GetTokenInformation(token, TokenPrivileges, nullptr, 0, &size);
-    if (size) {
-        std::vector<Byte> buffer(size);
-        if (GetTokenInformation(token, TokenPrivileges, buffer.data(), size, &size))
-            summary.privileges = reinterpret_cast<const TOKEN_PRIVILEGES*>(buffer.data())->PrivilegeCount;
-    }
-    CloseHandle(token);
-    return summary;
-}
-
 class Tray {
 public:
     explicit Tray(HINSTANCE instance) : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))) {
@@ -117,10 +57,10 @@ public:
     }
 
     int run(HINSTANCE instance) {
-        writeTrace(L"run: registering window class");
+        writeStartupLog(L"run: registering window class");
         taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
         if (!taskbarCreated_) fail(L"Register taskbar message");
-        writeTrace(L"run: creating window");
+        writeStartupLog(L"run: creating window");
         WNDCLASSW wc{};
         wc.hInstance = instance;
         wc.lpfnWndProc = procedure;
@@ -131,7 +71,7 @@ public:
                                 0, 0, 0, 0, nullptr, nullptr, instance, this);
         if (!hwnd_) fail(L"Create tray window");
 
-        writeTrace(L"run: filtering messages");
+        writeStartupLog(L"run: filtering messages");
         // Explorer runs at medium integrity while this process runs elevated, so
         // the taskbar messages have to pass UIPI. A tray started by the Task
         // Scheduler rejects the per-window form with ERROR_ACCESS_DENIED, so fall
@@ -140,37 +80,30 @@ public:
         // Explorer cannot reach this window.
         if (!ChangeWindowMessageFilterEx(hwnd_, iconMessage, MSGFLT_ALLOW, nullptr) ||
             !ChangeWindowMessageFilterEx(hwnd_, taskbarCreated_, MSGFLT_ALLOW, nullptr)) {
-            writeTrace(L"filter ex failed code=" + std::to_wstring(GetLastError()));
+            writeStartupLog(L"filter ex failed code=" + std::to_wstring(GetLastError()));
             if (!ChangeWindowMessageFilter(iconMessage, MSGFLT_ADD) ||
                 !ChangeWindowMessageFilter(taskbarCreated_, MSGFLT_ADD))
-                writeTrace(L"filter global failed code=" + std::to_wstring(GetLastError()));
+                writeStartupLog(L"filter global failed code=" + std::to_wstring(GetLastError()));
         }
         hdr_ = detectHdr();
-        {
-            const auto summary = tokenSummary();
-            writeTrace(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)) +
-                       L" desktop=" + desktopName() +
-                       L" admin=" + (isTokenAdmin() ? L"1" : L"0") +
-                       L" groups=" + std::to_wstring(summary.groups) +
-                       L" privs=" + std::to_wstring(summary.privileges) +
-                       L" dwm=" + std::to_wstring(currentDwm(patcher_.session)) +
-                       L" dwmProcs=" + std::to_wstring(processesNamed(L"dwm.exe").size()));
-        }
+        writeStartupLog(L"run: hdr=" + std::to_wstring(static_cast<int>(hdr_)) +
+                   L" dwm=" + std::to_wstring(currentDwm(patcher_.session)) +
+                   L" dwmProcs=" + std::to_wstring(processesNamed(L"dwm.exe").size()));
         // The inspection result is reported through the tooltip and the log. A
         // modal warning here would block the message loop when the tray is
-        // started by the Task Scheduler, so the icon has to be added first.
+        // started from the Run key, so the icon has to be added first.
         const bool inspected = refresh();
-        writeTrace(L"run: refresh=" + std::to_wstring(inspected ? 1 : 0) + L" error=" + error_);
-        writeTrace(L"run: adding icon");
+        writeStartupLog(L"run: refresh=" + std::to_wstring(inspected ? 1 : 0) + L" error=" + error_);
+        writeStartupLog(L"run: adding icon");
         if (!addIcon()) {
-            writeTrace(L"add icon failed code=" + std::to_wstring(GetLastError()));
+            writeStartupLog(L"add icon failed code=" + std::to_wstring(GetLastError()));
             fail(L"Add tray icon");
         }
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
         restoreLastMode();
         PostMessageW(hwnd_, initMessage, 0, 0);
-        writeTrace(L"run: message loop");
+        writeStartupLog(L"run: message loop");
 
         MSG msg{};
         int status;
@@ -479,31 +412,31 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    writeTrace(startupContext());
-    writeTrace(L"settingsFile=" + settingsFile());
+    writeStartupLog(startupContext());
+    writeStartupLog(L"settingsFile=" + settingsFile());
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            writeTrace(L"exit: another instance is running");
+            writeStartupLog(L"exit: another instance is running");
             return 0;
         }
-        writeTrace(L"instance lock acquired");
+        writeStartupLog(L"instance lock acquired");
         Tray tray(instance);
-        writeTrace(L"tray constructed");
+        writeStartupLog(L"tray constructed");
         const int code = tray.run(instance);
-        writeTrace(L"run returned " + std::to_wstring(code));
+        writeStartupLog(L"run returned " + std::to_wstring(code));
         return code;
     } catch (const Failure& error) {
-        writeTrace(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
+        writeStartupLog(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
         const int box = MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
-        writeTrace(L"failure: message box returned " + std::to_wstring(box));
+        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
     } catch (...) {
-        writeTrace(L"failure: unknown");
+        writeStartupLog(L"failure: unknown");
         const int box = MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
-        writeTrace(L"failure: message box returned " + std::to_wstring(box));
+        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
     }
-    writeTrace(L"exit 1");
+    writeStartupLog(L"exit 1");
     return 1;
 }
 
