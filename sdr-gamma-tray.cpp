@@ -7,6 +7,7 @@ constexpr UINT trayId = 1;
 constexpr UINT iconMessage = WM_APP + 1;
 constexpr UINT doneMessage = WM_APP + 2;
 constexpr UINT initMessage = WM_APP + 3;
+constexpr UINT revealMessage = WM_APP + 4;
 constexpr UINT firstMode = 100;
 constexpr UINT exitCommand = 110;
 constexpr UINT autoStartCommand = 111;
@@ -178,9 +179,12 @@ private:
 
     bool addIcon() const {
         auto info = data();
-        info.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+        info.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_INFO;
         info.uCallbackMessage = iconMessage;
         info.hIcon = icon_;
+        info.dwInfoFlags = NIIF_INFO;
+        wcscpy_s(info.szInfoTitle, title);
+        wcscpy_s(info.szInfo, L"Fuck sRGB is running. Right-click this icon to change the gamma mode.");
         tooltip(info);
         if (!Shell_NotifyIconW(NIM_ADD, &info)) return false;
         info.uVersion = NOTIFYICON_VERSION_4;
@@ -221,6 +225,9 @@ private:
     // always starts on the native curve, so a saved Gamma22/Gamma2.4/Linear
     // selection needs one patch cycle to come back after a logon or restart.
     void restoreLastMode() {
+        writeStartupLog(L"restore: hdr=" + std::to_wstring(static_cast<int>(hdr_)) +
+                        L" current=" + std::to_wstring(index(current_.mode)) +
+                        L" persisted=" + std::to_wstring(index(persisted_)));
         if (hdr_ == HdrState::Active && current_.mode != Mode::Unknown) {
             restored_ = true;
             if (persisted_ != current_.mode) {
@@ -281,6 +288,8 @@ private:
     void startWork(Mode mode, bool changeDwm) {
         if (busy_) return;
         const auto before = current_;
+        writeStartupLog(L"startWork mode=" + std::to_wstring(index(mode)) +
+                        L" changeDwm=" + std::to_wstring(changeDwm ? 1 : 0));
         busy_ = true;
         switching_ = changeDwm;
         workerError_.clear();
@@ -293,10 +302,14 @@ private:
                 if (changeDwm && detectHdr() == HdrState::Active) {
                     try {
                         result_ = patcher_.set(mode);
+                        writeStartupLog(L"patcher set ok mode=" + std::to_wstring(index(result_.mode)));
                     } catch (const Failure& error) {
                         workerError_ = errorText(error);
+                        writeStartupLog(L"patcher set failed: " + std::wstring(error.operation) +
+                                        L" code=" + std::to_wstring(error.code));
                     } catch (...) {
                         workerError_ = L"Could not apply the gamma mode.";
+                        writeStartupLog(L"patcher set failed: unknown");
                     }
                 }
                 if (workerError_.empty()) {
@@ -304,6 +317,7 @@ private:
                         edgeResult_ = edge_.sync(detectHdr() == HdrState::Active ? result_.mode : Mode::Srgb);
                     } catch (...) {
                         edgeResultError_ = true;
+                        writeStartupLog(L"edge sync threw");
                     }
                 }
                 PostMessageW(hwnd_, doneMessage, 0, 0);
@@ -311,6 +325,7 @@ private:
         } catch (...) {
             busy_ = switching_ = false;
             updateTooltip();
+            writeStartupLog(L"startWork: could not start the worker thread");
             if (changeDwm) MessageBoxW(nullptr, L"Could not start the gamma change.", title, MB_OK | MB_ICONERROR);
         }
     }
@@ -327,6 +342,13 @@ private:
             return 0;
         }
         switch (message) {
+        case revealMessage: {
+            // A second launch asked this instance to make itself visible.
+            POINT where{};
+            GetCursorPos(&where);
+            menu(where);
+            return 0;
+        }
         case iconMessage:
             if (LOWORD(lp) == WM_CONTEXTMENU && HIWORD(lp) == trayId) {
                 POINT where{GET_X_LPARAM(wp), GET_Y_LPARAM(wp)};
@@ -348,7 +370,10 @@ private:
             // the tray icon. An existing entry is rewritten so a stale or
             // malformed task from an older build repairs itself.
             autoStart_ = autoStartEnabled();
+            writeStartupLog(L"init: autoStart=" + std::to_wstring(autoStart_ ? 1 : 0) +
+                            L" exe=" + executablePath());
             if (autoStart_) autoStart_ = enableAutoStart();
+            writeStartupLog(L"init: autoStart after sync=" + std::to_wstring(autoStart_ ? 1 : 0));
             return 0;
         case doneMessage:
             if (!worker_.joinable()) return 0;
@@ -365,10 +390,15 @@ private:
                         persisted_ = current_.mode;
                     }
                 }
+                writeStartupLog(L"done: mode=" + std::to_wstring(index(current_.mode)) +
+                                L" edge synced=" + std::to_wstring(edgeStatus_.synced) +
+                                L" waiting=" + std::to_wstring(edgeStatus_.waiting) +
+                                L" skipped=" + std::to_wstring(edgeStatus_.skipped));
                 updateTooltip();
             } else {
                 refresh();
                 updateTooltip();
+                writeStartupLog(L"done: worker error " + workerError_);
                 MessageBoxW(nullptr, workerError_.c_str(), title, MB_OK | MB_ICONERROR);
             }
             return 0;
@@ -394,10 +424,18 @@ private:
         case WM_DISPLAYCHANGE:
             refreshHdr();
             return 0;
+        case WM_QUERYENDSESSION:
+            writeStartupLog(L"WM_QUERYENDSESSION");
+            return TRUE;
+        case WM_ENDSESSION:
+            writeStartupLog(L"WM_ENDSESSION end=" + std::to_wstring(wp ? 1 : 0));
+            return 0;
         case WM_CLOSE:
+            writeStartupLog(L"WM_CLOSE");
             DestroyWindow(hwnd_);
             return 0;
         case WM_DESTROY: {
+            writeStartupLog(L"WM_DESTROY");
             KillTimer(hwnd_, 1);
             auto info = data();
             Shell_NotifyIconW(NIM_DELETE, &info);
@@ -418,7 +456,24 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
+            // The tray already runs in another process. Surface it instead of
+            // exiting silently, which looked like "nothing happened" when the
+            // executable was started a second time.
             writeStartupLog(L"exit: another instance is running");
+            HWND existing = nullptr;
+            for (int attempt = 0; attempt < 10 && !existing; ++attempt) {
+                if (attempt) Sleep(150);
+                existing = FindWindowW(windowClass, nullptr);
+            }
+            if (existing) {
+                writeStartupLog(L"exit: asked the running instance to show its menu");
+                PostMessageW(existing, revealMessage, 0, 0);
+            } else {
+                writeStartupLog(L"exit: running window not found");
+                MessageBoxW(nullptr, L"Fuck sRGB is already running in the notification area.\n"
+                                      L"Right-click its icon to change the gamma mode.",
+                            title, MB_OK | MB_ICONINFORMATION);
+            }
             return 0;
         }
         writeStartupLog(L"instance lock acquired");

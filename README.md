@@ -27,7 +27,16 @@ All active displays must be in HDR mode to enable the curve controls. If HDR is 
 
 The tray records the curve it last applied in `%LOCALAPPDATA%\Fuck-sRGB\settings.ini` and reapplies it on the next start. A newly created DWM instance always runs the native shaders, so restoring **Gamma2.2**, **Gamma2.4** or **Linear** patches it during startup, which restarts DWM once and can briefly blank the screen. Selecting **Native** and exiting keeps the next start silent, and an unchanged selection never restarts DWM again.
 
-**Start with Windows** writes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, holding the quoted executable path. That is the same mechanism a tray without an elevation requirement uses. A logon task at the highest run level is not usable here: the process it creates runs elevated but cannot reach the desktop's window station, so `Shell_NotifyIcon`, `ChangeWindowMessageFilter` and even process enumeration fail with `ERROR_ACCESS_DENIED` and no icon appears. Because the executable is manifested `highestAvailable`, Windows shows one UAC prompt at sign-in and the tray then behaves exactly like a manually started instance. The value is rewritten on every start, so moving the executable repairs the entry and a task left behind by 1.2.0-1.2.8 is removed. Turning the item off removes both forms.
+### Prompts when starting the tray
+
+The executable is not code-signed, so Windows can ask twice before the tray appears:
+
+1. **Open File - Security Warning** ("The publisher could not be verified"). This dialog only appears for files carrying a Mark of the Web, which is what a browser download produces. A build copied from a build artifact does not carry it. If you do see it, `Unblock-File -Path .\Fuck-sRGB-1.3.0.exe` removes the mark, or just click **Run**.
+2. **User Account Control.** The tray patches DWM, so it needs an elevated process. The manifest is `highestAvailable` and the logon entry is an `HKCU` Run value, so Windows asks once at sign-in and then starts the tray exactly as a manual launch would.
+
+Clicking the executable a second time while the tray is already running does not start a second copy: the running instance opens its own menu so the existing tray becomes visible. Every start, exit and mode change is appended to `%LOCALAPPDATA%\Fuck-sRGB\startup.log`.
+
+**Start with Windows** writes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, holding the quoted executable path. That is the same mechanism a tray without an elevation requirement uses. A logon task at the highest run level is not usable here: the process it creates runs elevated but cannot reach the desktop's window station, so `Shell_NotifyIcon`, `ChangeWindowMessageFilter` and even process enumeration fail with `ERROR_ACCESS_DENIED` and no icon appears. The value is rewritten on every start, so moving the executable repairs the entry and a task left behind by 1.2.0-1.2.8 is removed. Turning the item off removes both forms.
 
 ### Compatibility
 
@@ -66,12 +75,12 @@ Use an x64 MSVC developer command prompt with a recent Windows SDK. Run these co
 
 ```bat
 rc /nologo sdr-gamma.rc
-cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.9.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.3.0.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='highestAvailable' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 ```
 
 The headers `tray-patch-plan.h`, `edge-gamma-plan.h` and `tray-settings.h` supply the DWM shader signatures, Edge patch data and the per-user settings and start-at-logon handling.
 
-The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.2.9.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
+The workflow in `.github/workflows/build.yml` runs the same commands on `windows-latest` and uploads `Fuck-sRGB-1.3.0.exe` as a build artifact, so a fork can be compiled without a local MSVC installation. The resource script embeds the icon, version metadata and upstream browser patch license notice.
 
 ## Acknowledgments
 
