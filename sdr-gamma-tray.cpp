@@ -1,4 +1,5 @@
 #include "edge-gamma-core.h"
+#include "tray-settings.h"
 
 constexpr wchar_t title[] = L"Fuck sRGB";
 constexpr wchar_t windowClass[] = L"Codex.SdrGamma.Tray.1";
@@ -7,6 +8,7 @@ constexpr UINT iconMessage = WM_APP + 1;
 constexpr UINT doneMessage = WM_APP + 2;
 constexpr UINT firstMode = 100;
 constexpr UINT exitCommand = 110;
+constexpr UINT autoStartCommand = 111;
 constexpr UINT iconResource = 101;
 constexpr const wchar_t* modes[] = {
     L"Native", L"Gamma2.2", L"Gamma2.4", L"Linear"
@@ -57,7 +59,9 @@ public:
             MessageBoxW(nullptr, error_.c_str(), title, MB_OK | MB_ICONWARNING);
         if (!addIcon()) fail(L"Add tray icon");
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
-        startWork(current_.mode, false);
+        persisted_ = loadSavedMode();
+        autoStart_ = autoStartEnabled();
+        restoreLastMode();
 
         MSG msg{};
         int status;
@@ -84,6 +88,9 @@ private:
     Current result_{};
     HdrState hdr_ = HdrState::Unavailable;
     bool busy_ = false;
+    bool autoStart_ = false;
+    bool restored_ = false;
+    Mode persisted_ = Mode::Srgb;
     bool switching_ = false;
     EdgeSyncStatus edgeStatus_{};
     EdgeSyncStatus edgeResult_{};
@@ -168,6 +175,36 @@ private:
         return error_.empty();
     }
 
+    // Reapplies the mode stored by the previous session. A fresh DWM instance
+    // always starts on the native curve, so a saved Gamma22/Gamma2.4/Linear
+    // selection needs one patch cycle to come back after a logon or restart.
+    void restoreLastMode() {
+        if (hdr_ == HdrState::Active && current_.mode != Mode::Unknown) {
+            restored_ = true;
+            if (persisted_ != current_.mode) {
+                startWork(persisted_, true);
+                return;
+            }
+        }
+        startWork(current_.mode, false);
+    }
+
+    void toggleAutoStart() {
+        if (autoStart_) {
+            disableAutoStart();
+            autoStart_ = autoStartEnabled();
+            if (autoStart_)
+                MessageBoxW(nullptr, L"Could not remove the start-at-logon entry.", title,
+                            MB_OK | MB_ICONERROR);
+        } else {
+            if (!enableAutoStart())
+                MessageBoxW(nullptr, L"Could not create the start-at-logon entry.", title,
+                            MB_OK | MB_ICONERROR);
+            autoStart_ = autoStartEnabled();
+        }
+        updateTooltip();
+    }
+
     void menu(POINT where) {
         refreshHdr();
         const bool active = hdr_ == HdrState::Active;
@@ -186,6 +223,9 @@ private:
             AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, busy_ ? L"Updating..." :
                         !error_.empty() ? L"DWM verification failed" : L"Select a mode to replace legacy gamma");
         }
+        AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(popup, MF_STRING | (autoStart_ ? MF_CHECKED : MF_UNCHECKED),
+                    autoStartCommand, L"Start with Windows");
         AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(popup, MF_STRING, exitCommand, L"Exit");
         SetForegroundWindow(hwnd_);
@@ -255,6 +295,8 @@ private:
             const auto command = LOWORD(wp);
             if (command >= firstMode && command < firstMode + selectableCount)
                 select(static_cast<Mode>(command - firstMode));
+            else if (command == autoStartCommand)
+                toggleAutoStart();
             else if (command == exitCommand)
                 DestroyWindow(hwnd_);
             return 0;
@@ -267,7 +309,13 @@ private:
             edgeError_ = edgeResultError_;
             if (workerError_.empty()) {
                 current_ = result_;
-                if (current_.mode != Mode::Unknown) error_.clear();
+                if (current_.mode != Mode::Unknown) {
+                    error_.clear();
+                    if (current_.mode != persisted_) {
+                        saveMode(current_.mode);
+                        persisted_ = current_.mode;
+                    }
+                }
                 updateTooltip();
             } else {
                 refresh();
@@ -278,6 +326,15 @@ private:
         case WM_TIMER:
             refreshHdr();
             if (!busy_) {
+                if (!restored_ && hdr_ == HdrState::Active) {
+                    // HDR arrived after startup, for example when the display
+                    // woke up later: apply the stored mode once.
+                    restored_ = true;
+                    if (current_.mode != Mode::Unknown && persisted_ != current_.mode) {
+                        startWork(persisted_, true);
+                        return 0;
+                    }
+                }
                 if (currentDwm(patcher_.session) != current_.pid) {
                     refresh();
                     updateTooltip();

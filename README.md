@@ -18,9 +18,16 @@ Download the executable from GitHub Releases and run it. The program requests ad
 | **Gamma2.2** | Uses the pure power curve `x^2.2`. |
 | **Gamma2.4** | Uses the pure power curve `x^2.4`. |
 | **Linear** | Uses `x` directly. The conspicuous change in shadows makes it easy to identify content that goes through the patch. |
+| **Start with Windows** | Toggles a per-user logon task that starts the tray without a UAC prompt. |
 | **Exit** | Closes the tray and stops monitoring. |
 
 All active displays must be in HDR mode to enable the curve controls. If HDR is off, the display state is unavailable, or the desktop mixes HDR and SDR displays, only **Exit** remains available. A mode change restarts DWM and can briefly blank the screen. To undo the correction before closing the tray, choose **Native** first. **Exit** alone leaves existing in-memory edits in place until their processes exit.
+
+### Last mode and start at logon
+
+The tray records the curve it last applied in `%LOCALAPPDATA%\Fuck-sRGB\settings.ini` and reapplies it on the next start. A newly created DWM instance always runs the native shaders, so restoring **Gamma2.2**, **Gamma2.4** or **Linear** patches it during startup, which restarts DWM once and can briefly blank the screen. Selecting **Native** and exiting keeps the next start silent, and an unchanged selection never restarts DWM again.
+
+**Start with Windows** creates the per-user logon task `Fuck sRGB` at the highest run level, so the tray starts at sign-in without a UAC prompt. If the task cannot be created, the tray falls back to the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, which does prompt for elevation. Turning the item off removes both forms. Both store the absolute executable path, so re-toggle the item after moving the file.
 
 ### Compatibility
 
@@ -59,10 +66,10 @@ Use an x64 MSVC developer command prompt with a recent Windows SDK. Run these co
 
 ```bat
 rc /nologo sdr-gamma.rc
-cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.1.0.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
+cl /nologo /std:c++17 /W4 /O2 /utf-8 /EHsc /MT /Fe:Fuck-sRGB-1.2.0.exe sdr-gamma-tray.cpp sdr-gamma.res /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" bcrypt.lib advapi32.lib user32.lib shell32.lib
 ```
 
-The headers `tray-patch-plan.h` and `edge-gamma-plan.h` supply the DWM shader signatures and Edge patch data. The resource script embeds the icon, version metadata and upstream browser patch license notice.
+The headers `tray-patch-plan.h`, `edge-gamma-plan.h` and `tray-settings.h` supply the DWM shader signatures, Edge patch data and the per-user settings and start-at-logon handling. The resource script embeds the icon, version metadata and upstream browser patch license notice.
 
 ## Acknowledgments
 
