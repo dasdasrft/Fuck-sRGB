@@ -90,10 +90,9 @@ struct DashboardCallbacks {
 class DashboardWindow {
 public:
     static constexpr wchar_t className[] = L"FuckSRGB.KinDashboard.1";
-    static constexpr int defaultWidth = 880;
-    static constexpr int defaultHeight = 640;
-    static constexpr int minWidth = 780;
-    static constexpr int minHeight = 560;
+    // 精准黄金分割固定尺寸：锁定 840 × 600，彻底禁止任何拉伸与位移
+    static constexpr int windowWidth = 840;
+    static constexpr int windowHeight = 600;
 
     explicit DashboardWindow(HINSTANCE instance, DashboardCallbacks callbacks)
         : instance_(instance), callbacks_(std::move(callbacks)) {
@@ -141,16 +140,14 @@ private:
 
     // 交互悬停状态
     bool hoverTitleMin_ = false;
-    bool hoverTitleMax_ = false;
     bool hoverTitleClose_ = false;
     int hoverCardIndex_ = -1;
     bool hoverToggle_ = false;
     bool hoverMinBtn_ = false;
     bool hoverExitBtn_ = false;
 
-    // 响应式布局矩形区域
+    // 固定布局矩形区域
     RectF titleMinRect_{};
-    RectF titleMaxRect_{};
     RectF titleCloseRect_{};
     RectF graphCardRect_{};
     RectF telemetryCardRect_{};
@@ -161,7 +158,6 @@ private:
 
     void registerClass() {
         WNDCLASSW wc{};
-        // CS_HREDRAW | CS_VREDRAW: 窗口拉伸调整大小时强制整窗重绘，彻底根除残影与位移
         wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.hInstance = instance_;
         wc.lpfnWndProc = wndProc;
@@ -175,15 +171,16 @@ private:
     void create() {
         const int screenW = GetSystemMetrics(SM_CXSCREEN);
         const int screenH = GetSystemMetrics(SM_CYSCREEN);
-        const int posX = (screenW - defaultWidth) / 2;
-        const int posY = (screenH - defaultHeight) / 2;
+        const int posX = (screenW - windowWidth) / 2;
+        const int posY = (screenH - windowHeight) / 2;
 
+        // 固定尺寸窗口样式组合：无 WS_MAXIMIZEBOX，无 WS_THICKFRAME
         hwnd_ = CreateWindowExW(
             WS_EX_APPWINDOW,
             className,
             L"Fuck sRGB · 控制中心",
-            WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION,
-            posX, posY, defaultWidth, defaultHeight,
+            WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+            posX, posY, windowWidth, windowHeight,
             nullptr, nullptr, instance_, this
         );
 
@@ -195,80 +192,68 @@ private:
         DWORD corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-        // 扩展边框保留 DWM 原生投影与 Aero Snap 吸附
+        // 扩展边框保留 DWM 原生硬件级投影
         MARGINS margins = { 1, 1, 1, 1 };
         DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
-        // 初始化布局参数
-        updateLayout(static_cast<float>(defaultWidth), static_cast<float>(defaultHeight));
+        // 初始化固定布局
+        updateLayout();
 
         SetTimer(hwnd_, 101, 300, nullptr);
     }
 
-    // 严谨可靠的动态自适应布局计算：边距恒定锁定，绝不发生跳变与位移
-    void updateLayout(float w, float h) {
+    // 绝对锁定的黄金律布局计算：间距严格统一为 14px，绝无任何拉伸与位移
+    void updateLayout() {
+        const float w = static_cast<float>(windowWidth);
+        const float h = static_cast<float>(windowHeight);
+
+        // 标题栏：高度 44px，仅保留最小化与关闭按钮，无最大化
         const float titleBarH = 44.0f;
         const float btnW = 44.0f;
         titleCloseRect_ = RectF(w - btnW, 0.0f, btnW, titleBarH);
-        titleMaxRect_   = RectF(w - btnW * 2.0f, 0.0f, btnW, titleBarH);
-        titleMinRect_   = RectF(w - btnW * 3.0f, 0.0f, btnW, titleBarH);
+        titleMinRect_   = RectF(w - btnW * 2.0f, 0.0f, btnW, titleBarH);
 
-        const float footerH = 60.0f;
-        const float padTop = 14.0f;
-        const float padBottom = 14.0f;
-
-        // 固定左右内边距为稳定的 20px，拉伸窗口时左侧永远基准锁定，绝不横向突跳
         const float padX = 20.0f;
-        const float availW = (std::max)(100.0f, w - padX * 2.0f);
+        const float availW = w - padX * 2.0f; // 800px
 
-        // 计算可用于卡片的内容垂直总高度
-        const float startY = titleBarH + padTop;
-        const float footerY = h - footerH;
-        const float totalContentH = (std::max)(360.0f, footerY - startY - padBottom);
-
-        // 上下两层黄金分割比例 (上半图表约占 51%，下半模式卡片约占 49%，间距 14px)
-        const float gapY = 14.0f;
-        const float remainingForRows = totalContentH - gapY;
-        const float topRowH = (std::max)(200.0f, remainingForRows * 0.51f);
-        const float cardH = (std::max)(160.0f, remainingForRows - topRowH);
-
-        // 上半部左右分栏：EOTF 曲线 (50%) + 管线监控 (50%)
+        // 上半部：EOTF 曲线 (393px) + 管线监控 (393px)，间距 14px，高度 224px
+        const float startY = titleBarH + 14.0f; // 58px
+        const float topRowH = 224.0f;
         const float gapX = 14.0f;
-        const float leftW = (availW - gapX) * 0.50f;
-        const float rightW = availW - gapX - leftW;
+        const float halfW = (availW - gapX) * 0.50f; // 393px
 
-        graphCardRect_ = RectF(padX, startY, leftW, topRowH);
-        telemetryCardRect_ = RectF(padX + leftW + gapX, startY, rightW, topRowH);
+        graphCardRect_ = RectF(padX, startY, halfW, topRowH);
+        telemetryCardRect_ = RectF(padX + halfW + gapX, startY, halfW, topRowH);
 
-        // 中间部：4 模式卡片水平排布
+        // 中间部：4 模式卡片 (每张宽 192.5px，高 230px)，间距 10px
+        const float middleY = startY + topRowH + 14.0f; // 296px
+        const float cardH = 230.0f;
         const float cardGap = 10.0f;
-        const float cardW = (availW - cardGap * 3.0f) / 4.0f;
-        const float middleY = startY + topRowH + gapY;
+        const float cardW = (availW - cardGap * 3.0f) / 4.0f; // 192.5px
 
         for (int i = 0; i < 4; ++i) {
             cardRects_[i] = RectF(padX + i * (cardW + cardGap), middleY, cardW, cardH);
         }
 
-        // 底部 Footer 控件布局 (按钮独立宽阔、全局居中对齐、彻底消除文字边框碰撞)
+        // 底部 Footer：Y = 540px，高度 60px
+        const float footerY = h - 60.0f;
         toggleRect_ = RectF(padX, footerY + 20.0f, 38.0f, 20.0f);
 
         const float footerBtnH = 34.0f;
         const float exitW = 96.0f;
         const float minW = 128.0f;
         const float btnGap = 14.0f;
-        const float btnY = footerY + (footerH - footerBtnH) * 0.5f;
+        const float btnY = footerY + (60.0f - footerBtnH) * 0.5f; // 553px
 
         exitBtnRect_ = RectF(w - padX - exitW, btnY, exitW, footerBtnH);
         minBtnRect_  = RectF(exitBtnRect_.X - btnGap - minW, btnY, minW, footerBtnH);
     }
 
     bool isOverTitleBarButtons(float x, float y) const {
-        return titleMinRect_.Contains(x, y) ||
-               titleMaxRect_.Contains(x, y) ||
-               titleCloseRect_.Contains(x, y);
+        return titleMinRect_.Contains(x, y) || titleCloseRect_.Contains(x, y);
     }
 
     static LRESULT CALLBACK wndProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
@@ -285,79 +270,34 @@ private:
 
         switch (message) {
         case WM_NCCALCSIZE: {
-            if (wp) {
-                if (IsZoomed(hwnd)) {
-                    auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
-                    HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-                    MONITORINFO mi{ sizeof(mi) };
-                    if (GetMonitorInfoW(hMon, &mi)) {
-                        params->rgrc[0] = mi.rcWork;
-                    }
-                }
-                return 0;
-            }
+            if (wp) return 0; // 完全移除原生粗丑标题栏与非客户区边框
             return DefWindowProcW(hwnd, message, wp, lp);
         }
 
         case WM_NCHITTEST: {
             POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-            RECT rc;
-            GetWindowRect(hwnd, &rc);
-
-            const int border = 6;
-            const bool canResize = !IsZoomed(hwnd);
-
-            if (canResize) {
-                bool left   = pt.x >= rc.left && pt.x < rc.left + border;
-                bool right  = pt.x < rc.right && pt.x >= rc.right - border;
-                bool top    = pt.y >= rc.top && pt.y < rc.top + border;
-                bool bottom = pt.y < rc.bottom && pt.y >= rc.bottom - border;
-
-                if (top && left) return HTTOPLEFT;
-                if (top && right) return HTTOPRIGHT;
-                if (bottom && left) return HTBOTTOMLEFT;
-                if (bottom && right) return HTBOTTOMRIGHT;
-                if (left) return HTLEFT;
-                if (right) return HTRIGHT;
-                if (top) return HTTOP;
-                if (bottom) return HTBOTTOM;
-            }
-
             POINT clientPt = pt;
             ScreenToClient(hwnd, &clientPt);
 
-            // 标题栏 44px 拖拽与双击最大化区域
+            // 标题栏 44px 拖拽移动区域
             if (clientPt.y >= 0 && clientPt.y < 44) {
                 if (window->isOverTitleBarButtons(static_cast<float>(clientPt.x), static_cast<float>(clientPt.y))) {
-                    return HTCLIENT;
+                    return HTCLIENT; // 允许按钮响应悬停与点击
                 }
-                return HTCAPTION;
+                return HTCAPTION; // 允许拖拽移动整个窗口
             }
 
+            // 彻底禁止任何边缘拉伸命中，永远返回 HTCLIENT
             return HTCLIENT;
         }
 
         case WM_GETMINMAXINFO: {
+            // 双重硬件锁定：最小尺寸与最大尺寸强制相等，彻底锁死固定视窗大小
             auto* info = reinterpret_cast<MINMAXINFO*>(lp);
-            info->ptMinTrackSize.x = minWidth;
-            info->ptMinTrackSize.y = minHeight;
-            return 0;
-        }
-
-        case WM_WINDOWPOSCHANGED: {
-            auto* pos = reinterpret_cast<WINDOWPOS*>(lp);
-            if (!(pos->flags & SWP_NOSIZE)) {
-                window->updateLayout(static_cast<float>(pos->cx), static_cast<float>(pos->cy));
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
-            return DefWindowProcW(hwnd, message, wp, lp);
-        }
-
-        case WM_SIZE: {
-            const int w = LOWORD(lp);
-            const int h = HIWORD(lp);
-            window->updateLayout(static_cast<float>(w), static_cast<float>(h));
-            InvalidateRect(hwnd, nullptr, FALSE);
+            info->ptMinTrackSize.x = windowWidth;
+            info->ptMinTrackSize.y = windowHeight;
+            info->ptMaxTrackSize.x = windowWidth;
+            info->ptMaxTrackSize.y = windowHeight;
             return 0;
         }
 
@@ -399,7 +339,7 @@ private:
 
         case WM_SETCURSOR: {
             if (LOWORD(lp) == HTCLIENT) {
-                if (window->hoverTitleMin_ || window->hoverTitleMax_ || window->hoverTitleClose_ ||
+                if (window->hoverTitleMin_ || window->hoverTitleClose_ ||
                     window->hoverCardIndex_ >= 0 || window->hoverToggle_ ||
                     window->hoverMinBtn_ || window->hoverExitBtn_) {
                     SetCursor(LoadCursor(nullptr, IDC_HAND));
@@ -420,7 +360,6 @@ private:
 
     void handleMouseMove(float x, float y) {
         bool oldTMin = hoverTitleMin_;
-        bool oldTMax = hoverTitleMax_;
         bool oldTClose = hoverTitleClose_;
         int oldCard = hoverCardIndex_;
         bool oldToggle = hoverToggle_;
@@ -428,7 +367,6 @@ private:
         bool oldExit = hoverExitBtn_;
 
         hoverTitleMin_ = titleMinRect_.Contains(x, y);
-        hoverTitleMax_ = titleMaxRect_.Contains(x, y);
         hoverTitleClose_ = titleCloseRect_.Contains(x, y);
 
         hoverCardIndex_ = -1;
@@ -443,7 +381,7 @@ private:
         hoverMinBtn_ = minBtnRect_.Contains(x, y);
         hoverExitBtn_ = exitBtnRect_.Contains(x, y);
 
-        if (oldTMin != hoverTitleMin_ || oldTMax != hoverTitleMax_ || oldTClose != hoverTitleClose_ ||
+        if (oldTMin != hoverTitleMin_ || oldTClose != hoverTitleClose_ ||
             oldCard != hoverCardIndex_ || oldToggle != hoverToggle_ ||
             oldMin != hoverMinBtn_ || oldExit != hoverExitBtn_) {
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -455,7 +393,6 @@ private:
 
     void handleMouseLeave() {
         hoverTitleMin_ = false;
-        hoverTitleMax_ = false;
         hoverTitleClose_ = false;
         hoverCardIndex_ = -1;
         hoverToggle_ = false;
@@ -467,10 +404,6 @@ private:
     void handleMouseClick(float x, float y) {
         if (titleMinRect_.Contains(x, y)) {
             ShowWindow(hwnd_, SW_MINIMIZE);
-            return;
-        }
-        if (titleMaxRect_.Contains(x, y)) {
-            ShowWindow(hwnd_, IsZoomed(hwnd_) ? SW_RESTORE : SW_MAXIMIZE);
             return;
         }
         if (titleCloseRect_.Contains(x, y)) {
@@ -533,13 +466,8 @@ private:
     }
 
     void render(HDC hdc) {
-        RECT clientRect{};
-        GetClientRect(hwnd_, &clientRect);
-        const int w = clientRect.right - clientRect.left;
-        const int h = clientRect.bottom - clientRect.top;
-        if (w <= 0 || h <= 0) return;
-
-        updateLayout(static_cast<float>(w), static_cast<float>(h));
+        const int w = windowWidth;
+        const int h = windowHeight;
 
         Bitmap buffer(w, h, PixelFormat32bppARGB);
         Graphics g(&buffer);
@@ -550,7 +478,7 @@ private:
         SolidBrush bgBrush(Kin::Canvas);
         g.FillRectangle(&bgBrush, 0, 0, w, h);
 
-        // 字体配置：符合 KIN 字级规范 (4.2 Token 层级)
+        // 字体配置：严格遵循 KIN 字级规范
         Font fontDisplay(L"Segoe UI", 12.0f, FontStyleBold, UnitPoint);
         Font fontHeading(L"Segoe UI", 10.5f, FontStyleBold, UnitPoint);
         Font fontBody(L"Segoe UI", 9.0f, FontStyleRegular, UnitPoint);
@@ -562,7 +490,6 @@ private:
         SolidBrush textMuted(Kin::TextMuted);
         SolidBrush positiveBrush(Kin::Positive);
 
-        // 全局居中格式化工具 (杜绝任何文字边框位移溢出)
         StringFormat centerFmt;
         centerFmt.SetAlignment(StringAlignmentCenter);
         centerFmt.SetLineAlignment(StringAlignmentCenter);
@@ -581,7 +508,7 @@ private:
         Pen titleLinePen(Kin::LineSubtle, 1.0f);
         g.DrawLine(&titleLinePen, 0.0f, 44.0f, static_cast<float>(w), 44.0f);
 
-        // 左侧品牌徽标
+        // 左侧品牌徽标 (与下方卡片对齐)
         const float brandX = graphCardRect_.X;
         RectF brandRect(brandX, 11.0f, 22.0f, 22.0f);
         SolidBrush brandBg(Kin::Surface3);
@@ -615,10 +542,10 @@ private:
         g.DrawString(L"·   HDR 伽马精度与色彩系统", -1, &fontSmall,
                      PointF(verBadge.X + verBadge.Width + 10.0f, 13.5f), &textMuted);
 
-        // 标题栏右侧窗口控制按钮
-        auto drawTitleBtn = [&](const RectF& rect, bool hovered, int type) {
+        // 标题栏右侧控制按钮：仅保留最小化与关闭，简洁现代
+        auto drawTitleBtn = [&](const RectF& rect, bool hovered, bool isClose) {
             if (hovered) {
-                if (type == 3) {
+                if (isClose) {
                     SolidBrush closeBg(Kin::Critical);
                     g.FillRectangle(&closeBg, rect);
                 } else {
@@ -628,26 +555,18 @@ private:
             }
             const float cx = rect.X + rect.Width * 0.5f;
             const float cy = rect.Y + rect.Height * 0.5f;
-            Pen iconPen((type == 3 && hovered) ? Color(255, 255, 255, 255) : Kin::TextSecondary, 1.2f);
+            Pen iconPen((isClose && hovered) ? Color(255, 255, 255, 255) : Kin::TextSecondary, 1.2f);
 
-            if (type == 1) { // 最小化
+            if (!isClose) { // 最小化
                 g.DrawLine(&iconPen, cx - 5.0f, cy, cx + 5.0f, cy);
-            } else if (type == 2) { // 最大化 / 还原
-                if (IsZoomed(hwnd_)) {
-                    g.DrawRectangle(&iconPen, cx - 4.0f, cy - 2.0f, 7.0f, 7.0f);
-                    g.DrawRectangle(&iconPen, cx - 2.0f, cy - 4.0f, 7.0f, 7.0f);
-                } else {
-                    g.DrawRectangle(&iconPen, cx - 5.0f, cy - 5.0f, 10.0f, 10.0f);
-                }
-            } else if (type == 3) { // 关闭
+            } else { // 关闭
                 g.DrawLine(&iconPen, cx - 4.5f, cy - 4.5f, cx + 4.5f, cy + 4.5f);
                 g.DrawLine(&iconPen, cx + 4.5f, cy - 4.5f, cx - 4.5f, cy + 4.5f);
             }
         };
 
-        drawTitleBtn(titleMinRect_, hoverTitleMin_, 1);
-        drawTitleBtn(titleMaxRect_, hoverTitleMax_, 2);
-        drawTitleBtn(titleCloseRect_, hoverTitleClose_, 3);
+        drawTitleBtn(titleMinRect_, hoverTitleMin_, false);
+        drawTitleBtn(titleCloseRect_, hoverTitleClose_, true);
 
         // 3. 上半部左侧：EOTF 实时伽马响应曲线图表
         SolidBrush cardBg(Kin::Surface2);
@@ -775,7 +694,7 @@ private:
                      PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + telemetryCardRect_.Height - 20.0f),
                      &textMuted);
 
-        // 4. 中间部：4 模式卡片 (文字精炼，纵向安全锚定)
+        // 4. 中间部：4 模式卡片 (严格校准描述：线性 1.0 为纯测试模式，非 HDR 直通)
         struct CardInfo {
             const wchar_t* title;
             const wchar_t* badge;
@@ -788,7 +707,7 @@ private:
             { L"原生 sRGB", L"默认映射", L"Windows 默认", L"未校准色彩曲线", L"暗部明显发灰泛白" },
             { L"Gamma 2.2", L"黄金标准 ★", L"绝大多数游戏影视", L"标准显示器通用", L"通透饱满 细节均衡" },
             { L"Gamma 2.4", L"影院母带", L"BT.1886 母带标准", L"暗室沉浸视听", L"黑场深邃 沉浸浓郁" },
-            { L"线性 1.0", L"专业直出", L"1:1 亮度直出", L"原始 HDR 色彩直通", L"适合专业色彩测试" }
+            { L"线性 1.0", L"测试模式", L"Gamma 1.0 线性", L"无曲线变换调试", L"仅供调色对比与测试" }
         };
 
         for (int i = 0; i < 4; ++i) {
@@ -826,7 +745,7 @@ private:
             g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 84.0f), &textSecondary);
             g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 14.0f, rc.Y + 106.0f), isSelected ? &textPrimary : &textMuted);
 
-            // 底部状态与操作指示 (始终在卡片底部 28px 留白区域，永不与上方文字重叠)
+            // 底部状态与操作指示
             const float statusY = rc.Y + rc.Height - 28.0f;
             if (isSelected) {
                 g.DrawString(L"● 已激活生效", -1, &fontBody, PointF(rc.X + 14.0f, statusY), &positiveBrush);
@@ -874,11 +793,9 @@ private:
         SolidBrush exitText(hoverExitBtn_ ? Kin::Critical : Kin::TextMuted);
         g.DrawString(L"退出程序", -1, &fontSmall, exitBtnRect_, &btnFmt, &exitText);
 
-        // 6. 非最大化时绘制发丝级外边框
-        if (!IsZoomed(hwnd_)) {
-            Pen winBorder(Color(28, 255, 255, 255), 1.0f);
-            g.DrawRectangle(&winBorder, 0, 0, w - 1, h - 1);
-        }
+        // 6. 绘制发丝级外边框，完美脱离背景
+        Pen winBorder(Color(28, 255, 255, 255), 1.0f);
+        g.DrawRectangle(&winBorder, 0, 0, w - 1, h - 1);
 
         // 7. 高速 Blit 到屏幕 DC，消除闪烁
         Graphics screen(hdc);
