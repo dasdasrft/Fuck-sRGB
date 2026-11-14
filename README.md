@@ -1,6 +1,20 @@
-# Fuck sRGB
+# Fuck sRGB (Modernized Edition)
 
-A Windows 11 tray utility that changes how supported SDR content is linearized when Windows HDR is active. It offers pure gamma 2.2 and 2.4 alongside the native behavior and a linear test mode.
+A Windows 11 utility and tray app that corrects SDR gamma linearization when Windows HDR is active. It offers pure gamma 2.2 and 2.4 curves alongside the native Windows piecewise sRGB behavior and a linear test mode.
+
+This repository is an enhanced, modernized fork of the original [HiBluey/Fuck-sRGB](https://github.com/HiBluey/Fuck-sRGB) project, adding a dedicated control center dashboard, real-time EOTF curve visualization, GPU crash protection, and seamless UAC-bypassing auto-start.
+
+## Comparison with Upstream (HiBluey/Fuck-sRGB)
+
+| Feature | Upstream (HiBluey/Fuck-sRGB v1.1.0) | Modernized Edition (v1.3.2) |
+| :--- | :--- | :--- |
+| **User Interface** | Basic tray right-click menu only | **Modern Dashboard Window** (KIN Design System v3.0.4) + Tray Menu |
+| **Curve Visualizer** | None (pure text options) | **Real-time dynamic EOTF response curve** renderer |
+| **Hardware Monitor** | Black box (no feedback) | Live monitor resolution, refresh rate, HDR color gamut, bit depth & DWM status |
+| **GPU Stability** | Unprotected (rapid switches can trigger TDR/black screen) | **GPU Guard**: DWM uptime check (3s) + 3-second switching cooldown lock |
+| **Auto-Start at Logon** | Not supported | **UAC-bypassing Task Scheduler logon task** with delay buffer |
+| **Settings Persistence**| Resets every restart | Automatically saved in `%LOCALAPPDATA%\Fuck-sRGB\settings.ini` |
+| **Process Lifecycle** | Basic process handling | Multi-session self-healing, single-instance focus wakeup, comprehensive diagnostic logs |
 
 ## Why SDR shadows look gray in HDR mode
 
@@ -36,7 +50,7 @@ The executable is not code-signed, so Windows can ask twice before the tray appe
 
 Clicking the executable a second time while the tray is already running does not start a second copy: the running instance opens its own menu so the existing tray becomes visible. Every start, exit and mode change is appended to `%LOCALAPPDATA%\Fuck-sRGB\startup.log`.
 
-**Start with Windows** writes the `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value named `Fuck sRGB`, holding the quoted executable path. That is the same mechanism a tray without an elevation requirement uses. A logon task at the highest run level is not usable here: the process it creates runs elevated but cannot reach the desktop's window station, so `Shell_NotifyIcon`, `ChangeWindowMessageFilter` and even process enumeration fail with `ERROR_ACCESS_DENIED` and no icon appears. The value is rewritten on every start, so moving the executable repairs the entry and a task left behind by 1.2.0-1.2.8 is removed. Turning the item off removes both forms.
+**Start with Windows** registers a Windows Task Scheduler task that runs at user logon with highest privileges, coupled with a 5-second initialization buffer. This allows the tray to start cleanly on boot without prompting for UAC approval, ensuring the notification icon and window station are ready. The configuration is mirrored in `%LOCALAPPDATA%\Fuck-sRGB\settings.ini` for persistence and recovery. Toggling the option off removes both the scheduled task and legacy registry run entries.
 
 ### Compatibility
 
