@@ -92,7 +92,7 @@ public:
     static constexpr wchar_t className[] = L"FuckSRGB.KinDashboard.1";
     static constexpr int defaultWidth = 880;
     static constexpr int defaultHeight = 640;
-    static constexpr int minWidth = 760;
+    static constexpr int minWidth = 780;
     static constexpr int minHeight = 560;
 
     explicit DashboardWindow(HINSTANCE instance, DashboardCallbacks callbacks)
@@ -161,6 +161,8 @@ private:
 
     void registerClass() {
         WNDCLASSW wc{};
+        // CS_HREDRAW | CS_VREDRAW: 窗口拉伸调整大小时强制整窗重绘，彻底根除残影与位移
+        wc.style = CS_HREDRAW | CS_VREDRAW;
         wc.hInstance = instance_;
         wc.lpfnWndProc = wndProc;
         wc.lpszClassName = className;
@@ -206,7 +208,7 @@ private:
         SetTimer(hwnd_, 101, 300, nullptr);
     }
 
-    // 动态弹性布局计算：彻底消除空白断层与文字越界
+    // 严谨可靠的动态自适应布局计算：边距恒定锁定，绝不发生跳变与位移
     void updateLayout(float w, float h) {
         const float titleBarH = 44.0f;
         const float btnW = 44.0f;
@@ -218,10 +220,9 @@ private:
         const float padTop = 14.0f;
         const float padBottom = 14.0f;
 
-        // 宽度居中适配：在大屏/4K下最大内容宽度限制在 1350px，保证视觉呼吸感
-        const float maxContentW = (std::min)(w - 40.0f, 1350.0f);
-        const float padX = (std::max)(20.0f, (w - maxContentW) * 0.5f);
-        const float availW = w - padX * 2.0f;
+        // 固定左右内边距为稳定的 20px，拉伸窗口时左侧永远基准锁定，绝不横向突跳
+        const float padX = 20.0f;
+        const float availW = (std::max)(100.0f, w - padX * 2.0f);
 
         // 计算可用于卡片的内容垂直总高度
         const float startY = titleBarH + padTop;
@@ -232,7 +233,7 @@ private:
         const float gapY = 14.0f;
         const float remainingForRows = totalContentH - gapY;
         const float topRowH = (std::max)(200.0f, remainingForRows * 0.51f);
-        const float cardH = (std::max)(165.0f, remainingForRows - topRowH);
+        const float cardH = (std::max)(160.0f, remainingForRows - topRowH);
 
         // 上半部左右分栏：EOTF 曲线 (50%) + 管线监控 (50%)
         const float gapX = 14.0f;
@@ -243,17 +244,17 @@ private:
         telemetryCardRect_ = RectF(padX + leftW + gapX, startY, rightW, topRowH);
 
         // 中间部：4 模式卡片水平排布
-        const float middleY = startY + topRowH + gapY;
         const float cardGap = 10.0f;
         const float cardW = (availW - cardGap * 3.0f) / 4.0f;
+        const float middleY = startY + topRowH + gapY;
 
         for (int i = 0; i < 4; ++i) {
             cardRects_[i] = RectF(padX + i * (cardW + cardGap), middleY, cardW, cardH);
         }
 
-        // 底部 Footer 控件布局 (按钮独立宽阔、居中对齐、彻底消除文字边框碰撞)
+        // 底部 Footer 控件布局 (按钮独立宽阔、全局居中对齐、彻底消除文字边框碰撞)
         toggleRect_ = RectF(padX, footerY + 20.0f, 38.0f, 20.0f);
-        
+
         const float footerBtnH = 34.0f;
         const float exitW = 96.0f;
         const float minW = 128.0f;
@@ -343,11 +344,20 @@ private:
             return 0;
         }
 
+        case WM_WINDOWPOSCHANGED: {
+            auto* pos = reinterpret_cast<WINDOWPOS*>(lp);
+            if (!(pos->flags & SWP_NOSIZE)) {
+                window->updateLayout(static_cast<float>(pos->cx), static_cast<float>(pos->cy));
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return DefWindowProcW(hwnd, message, wp, lp);
+        }
+
         case WM_SIZE: {
             const int w = LOWORD(lp);
             const int h = HIWORD(lp);
             window->updateLayout(static_cast<float>(w), static_cast<float>(h));
-            window->refresh();
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
 
@@ -651,7 +661,7 @@ private:
 
         // 坐标系严格安全边距
         const float gx = graphCardRect_.X + 38.0f;
-        const float gy = graphCardRect_.Y + graphCardRect_.Height - 42.0f;
+        const float gy = graphCardRect_.Y + graphCardRect_.Height - 44.0f;
         const float gw = graphCardRect_.Width - 56.0f;
         const float gh = gy - (graphCardRect_.Y + 48.0f);
 
@@ -697,13 +707,13 @@ private:
         }
         plotCurve(static_cast<int>(currentMode), Kin::Accent, 2.8f);
 
-        // 底部图例（采用紧凑 KIN 标识：● sRGB / ● 2.2 / ● 2.4 / ● 线性，各列居中且绝不撞字）
+        // 底部图例
         const wchar_t* legends[] = { L"● sRGB", L"● 2.2", L"● 2.4", L"● 线性" };
         const float legColW = gw / 4.0f;
         for (int i = 0; i < 4; ++i) {
             const bool isCur = (static_cast<int>(currentMode) == i);
             SolidBrush lBrush(isCur ? Kin::Accent : Kin::TextMuted);
-            g.DrawString(legends[i], -1, &fontSmall, PointF(gx + i * legColW + 6.0f, gy + 20.0f), &lBrush);
+            g.DrawString(legends[i], -1, &fontSmall, PointF(gx + i * legColW + 6.0f, gy + 22.0f), &lBrush);
         }
 
         // 3. 上半部右侧：系统管线监控面板
@@ -744,8 +754,7 @@ private:
         };
 
         const float rowStart = 46.0f;
-        const float availableRowH = telemetryCardRect_.Height - rowStart - 30.0f;
-        const float rowGap = (std::max)(24.0f, (std::min)(32.0f, availableRowH / 4.0f));
+        const float rowGap = 24.0f;
 
         drawRow(rowStart + 0.0f * rowGap, L"当前显示器:", resStr.c_str(), Kin::TextPrimary);
         drawRow(rowStart + 1.0f * rowGap, L"HDR 状态:", hdrActive ? L"BT.2020 广色域 / 10-bit" : L"SDR 标准动态范围",
@@ -766,7 +775,7 @@ private:
                      PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + telemetryCardRect_.Height - 20.0f),
                      &textMuted);
 
-        // 4. 中间部：4 模式卡片 (文字精炼，绝对不触碰卡片边缘)
+        // 4. 中间部：4 模式卡片 (文字精炼，纵向安全锚定)
         struct CardInfo {
             const wchar_t* title;
             const wchar_t* badge;
@@ -803,7 +812,7 @@ private:
             // 模式标题
             g.DrawString(cards[i].title, -1, &fontHeading, PointF(rc.X + 14.0f, rc.Y + 14.0f), &textPrimary);
 
-            // 小标签 Badge（紧凑优雅，文本严格居中）
+            // 小标签 Badge
             RectF tagBBox;
             g.MeasureString(cards[i].badge, -1, &fontMicro, PointF(0, 0), &tagBBox);
             const float tagW = tagBBox.Width + 14.0f;
@@ -812,18 +821,19 @@ private:
             drawRoundedRect(g, nullptr, &tagBg, tagRect, 4.0f);
             g.DrawString(cards[i].badge, -1, &fontMicro, tagRect, &centerFmt, &textPrimary);
 
-            // 描述文字
-            g.DrawString(cards[i].desc1, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 66.0f), &textSecondary);
-            g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 86.0f), &textSecondary);
-            g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 14.0f, rc.Y + 110.0f), isSelected ? &textPrimary : &textMuted);
+            // 描述文字 (严格自上而下稳定排布)
+            g.DrawString(cards[i].desc1, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 64.0f), &textSecondary);
+            g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 84.0f), &textSecondary);
+            g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 14.0f, rc.Y + 106.0f), isSelected ? &textPrimary : &textMuted);
 
-            // 底部状态与操作指示
+            // 底部状态与操作指示 (始终在卡片底部 28px 留白区域，永不与上方文字重叠)
+            const float statusY = rc.Y + rc.Height - 28.0f;
             if (isSelected) {
-                g.DrawString(L"● 已激活生效", -1, &fontBody, PointF(rc.X + 14.0f, rc.Y + rc.Height - 26.0f), &positiveBrush);
+                g.DrawString(L"● 已激活生效", -1, &fontBody, PointF(rc.X + 14.0f, statusY), &positiveBrush);
             } else {
                 const wchar_t* btnLbl = (cooldownMs > 0) ? L"显卡冷却中" : L"点击切换";
                 SolidBrush swBrush((cooldownMs > 0) ? Kin::Warning : Kin::TextMuted);
-                g.DrawString(btnLbl, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + rc.Height - 26.0f), &swBrush);
+                g.DrawString(btnLbl, -1, &fontSmall, PointF(rc.X + 14.0f, statusY), &swBrush);
             }
         }
 
