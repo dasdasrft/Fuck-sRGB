@@ -1,9 +1,14 @@
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <windows.h>
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <objbase.h>
+
 
 #pragma warning(push)
 #pragma warning(disable: 4458)
@@ -216,11 +221,11 @@ private:
         const float padTop = 14.0f;
 
         const float startY = titleBarH + padTop;
-        const float availW = std::max(100.0f, w - padX * 2.0f);
-        const float availH = std::max(100.0f, h - startY - footerH - 12.0f);
+        const float availW = (std::max)(100.0f, w - padX * 2.0f);
+        const float availH = (std::max)(100.0f, h - startY - footerH - 12.0f);
 
         // 上半部：EOTF 曲线图 (52%) 与 管线监控 (48%) 响应式自适应
-        const float topRowH = std::max(185.0f, std::min(235.0f, availH * 0.55f));
+        const float topRowH = (std::max)(185.0f, (std::min)(235.0f, availH * 0.55f));
         const float gapX = 14.0f;
         const float leftW = (availW - gapX) * 0.52f;
         const float rightW = (availW - gapX) * 0.48f;
@@ -230,7 +235,8 @@ private:
 
         // 中间部：4 模式卡片水平排布
         const float middleY = startY + topRowH + 12.0f;
-        const float cardH = std::max(125.0f, std::min(160.0f, h - middleY - footerH - 12.0f));
+        const float cardH = (std::max)(125.0f, (std::min)(160.0f, h - middleY - footerH - 12.0f));
+
         const float cardGap = 10.0f;
         const float cardW = (availW - cardGap * 3.0f) / 4.0f;
 
@@ -495,8 +501,9 @@ private:
     // 绘制符合 KIN 规范的细腻圆角矩形
     void drawRoundedRect(Graphics& g, const Pen* pen, const Brush* brush, const RectF& rect, float radius) {
         if (rect.Width <= 0.0f || rect.Height <= 0.0f) return;
-        float r = std::min(radius, std::min(rect.Width, rect.Height) * 0.5f);
+        float r = (std::min)(radius, (std::min)(rect.Width, rect.Height) * 0.5f);
         if (r <= 0.0f) {
+
             if (brush) g.FillRectangle(brush, rect);
             if (pen) g.DrawRectangle(pen, rect);
             return;
