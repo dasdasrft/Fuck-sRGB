@@ -99,9 +99,16 @@ public:
         const bool inspected = refresh();
         writeStartupLog(L"run: refresh=" + std::to_wstring(inspected ? 1 : 0) + L" error=" + error_);
         writeStartupLog(L"run: adding icon");
-        if (!addIcon()) {
-            writeStartupLog(L"add icon failed code=" + std::to_wstring(GetLastError()));
-            fail(L"Add tray icon");
+        bool iconAdded = false;
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            if (addIcon()) {
+                iconAdded = true;
+                break;
+            }
+            Sleep(500);
+        }
+        if (!iconAdded) {
+            writeStartupLog(L"add icon deferred, will attach upon TaskbarCreated");
         }
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
@@ -380,7 +387,6 @@ private:
             return 0;
         }
         case initMessage:
-            cleanupLegacyTaskOnce();
             autoStart_ = autoStartEnabled();
             writeStartupLog(L"init: autoStart=" + std::to_wstring(autoStart_ ? 1 : 0) +
                             L" exe=" + executablePath());
