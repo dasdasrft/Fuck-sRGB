@@ -359,6 +359,24 @@ struct Patcher {
 #pragma warning(suppress: 4191)
         const auto resume = reinterpret_cast<NtProc>(GetProcAddress(ntdll, "NtResumeProcess"));
         if (!suspend || !resume) fail(L"Locate DWM suspend and resume functions");
+
+        // 显卡驱动安全保护：若当前 DWM 进程启动尚不足 3 秒，显卡驱动与 DirectX 交换链仍在
+        // 初始化或握手阶段，过早终止极易触发 Windows TDR（掉驱动）。强制平稳缓冲至 3 秒。
+        FILETIME created{}, exited{}, kernel{}, user{};
+        if (GetProcessTimes(process.value, &created, &exited, &kernel, &user)) {
+            FILETIME now{};
+            GetSystemTimeAsFileTime(&now);
+            ULARGE_INTEGER c{}, n{};
+            c.LowPart = created.dwLowDateTime; c.HighPart = created.dwHighDateTime;
+            n.LowPart = now.dwLowDateTime; n.HighPart = now.dwHighDateTime;
+            if (n.QuadPart > c.QuadPart) {
+                const ULONGLONG ageMs = (n.QuadPart - c.QuadPart) / 10000;
+                if (ageMs < 3000) {
+                    Sleep(static_cast<DWORD>(3000 - ageMs));
+                }
+            }
+        }
+
         if (!TerminateProcess(process, 0)) fail(L"Restart DWM");
 
         const ULONGLONG deadline = GetTickCount64() + 5000;
@@ -377,6 +395,7 @@ struct Patcher {
                         patch(replacement, module, sha, plan, mode);
                         suspended.finish();
                     }
+                    Sleep(250);
                     return {pid, mode};
                 }
             }

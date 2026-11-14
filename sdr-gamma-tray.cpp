@@ -148,6 +148,7 @@ private:
     Mode persisted_ = Mode::Srgb;
     bool switching_ = false;
     bool circuitBroken_ = false;
+    ULONGLONG lastSwitchTime_ = 0;
     std::vector<ULONGLONG> dwmRestarts_;
     EdgeSyncStatus edgeStatus_{};
     EdgeSyncStatus edgeResult_{};
@@ -278,16 +279,19 @@ private:
         if (active && !busy_ && current_.mode == Mode::Unknown) { refresh(); updateTooltip(); }
         HMENU popup = CreatePopupMenu();
         if (!popup) return;
+        const ULONGLONG now = GetTickCount64();
+        const bool coolingDown = (now - lastSwitchTime_ < 3000);
         UINT flags = MF_STRING;
-        if (!active || busy_ || current_.mode == Mode::Unknown) flags |= MF_GRAYED;
+        if (!active || busy_ || coolingDown || current_.mode == Mode::Unknown) flags |= MF_GRAYED;
         for (UINT i = 0; i < selectableCount; ++i) AppendMenuW(popup, flags, firstMode + i, modes[i]);
         if (active && index(current_.mode) < selectableCount) {
             CheckMenuRadioItem(popup, firstMode, firstMode + selectableCount - 1,
                               firstMode + index(current_.mode), MF_BYCOMMAND);
         }
-        if (active && (busy_ || !error_.empty() || current_.mode == Mode::LegacyGamma26)) {
+        if (active && (busy_ || coolingDown || !error_.empty() || current_.mode == Mode::LegacyGamma26)) {
             AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, busy_ ? L"Updating..." :
+                        coolingDown ? L"Cooling down (protecting GPU)..." :
                         !error_.empty() ? (circuitBroken_ ? L"Safety circuit breaker tripped" : L"DWM verification failed") : L"Select a mode to replace legacy gamma");
         }
         AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
@@ -345,6 +349,9 @@ private:
             });
         } catch (...) {
             busy_ = switching_ = false;
+            if (changeDwm_) {
+                lastSwitchTime_ = GetTickCount64();
+            }
             updateTooltip();
             writeStartupLog(L"startWork: could not start the worker thread");
             if (changeDwm) MessageBoxW(nullptr, L"Could not start the gamma change.", title, MB_OK | MB_ICONERROR);
@@ -354,6 +361,11 @@ private:
     void select(Mode mode) {
         refreshHdr();
         if (hdr_ != HdrState::Active || mode == current_.mode || current_.mode == Mode::Unknown) return;
+        const ULONGLONG now = GetTickCount64();
+        if (now - lastSwitchTime_ < 3000) {
+            writeStartupLog(L"select: ignored, switching cooldown active (protecting GPU)");
+            return;
+        }
         startWork(mode, true);
     }
 
@@ -397,6 +409,9 @@ private:
             if (!worker_.joinable()) return 0;
             worker_.join();
             busy_ = switching_ = false;
+            if (changeDwm_) {
+                lastSwitchTime_ = GetTickCount64();
+            }
             edgeStatus_ = edgeResult_;
             edgeError_ = edgeResultError_;
             if (workerError_.empty()) {
@@ -471,7 +486,10 @@ private:
             if (!busy_) {
                 // 显示状态或 HDR 开启状态改变时立即尝试恢复用户偏好，消除 2 秒轮询延迟
                 if (hdr_ == HdrState::Active && current_.mode != Mode::Unknown && persisted_ != current_.mode) {
-                    startWork(persisted_, true);
+                    const ULONGLONG now = GetTickCount64();
+                    if (now - lastSwitchTime_ >= 3000) {
+                        startWork(persisted_, true);
+                    }
                 }
             }
             return 0;
