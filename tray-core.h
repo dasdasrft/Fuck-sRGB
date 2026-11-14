@@ -132,11 +132,18 @@ std::vector<ProcessEntry> processesNamed(const wchar_t* name) {
 }
 
 DWORD currentDwm(DWORD session) {
-    for (const auto& item:processesNamed(L"dwm.exe")) {
-        DWORD targetSession=0;
-        if (ProcessIdToSessionId(item.pid,&targetSession) && targetSession==session) return item.pid;
+    const auto procs = processesNamed(L"dwm.exe");
+    if (procs.empty()) return 0;
+    // 单用户或个人桌面 PC 环境下通常只有一个 DWM 进程，直接精准使用
+    if (procs.size() == 1) return procs[0].pid;
+
+    for (const auto& item : procs) {
+        DWORD targetSession = 0;
+        if (ProcessIdToSessionId(item.pid, &targetSession) && targetSession == session)
+            return item.pid;
     }
-    return 0;
+    // 降级保护：多进程时若 ProcessIdToSessionId 受权限限制，返回第一个候选进程
+    return procs[0].pid;
 }
 
 Module findModule(DWORD pid, const std::wstring& dllPath) {

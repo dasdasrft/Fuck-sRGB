@@ -59,6 +59,8 @@ public:
     }
 
     int run(HINSTANCE instance) {
+        // 在托盘全生命周期内激活调试特权，确保对 dwm.exe 的进程枚举与查询具有完整权限
+        DebugPrivilege globalDebug;
         writeStartupLog(L"run: registering window class");
         taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
         if (!taskbarCreated_) fail(L"Register taskbar message");
@@ -279,7 +281,7 @@ private:
         if (active && (busy_ || !error_.empty() || current_.mode == Mode::LegacyGamma26)) {
             AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, busy_ ? L"Updating..." :
-                        !error_.empty() ? L"DWM verification failed" : L"Select a mode to replace legacy gamma");
+                        !error_.empty() ? (circuitBroken_ ? L"Safety circuit breaker tripped" : L"DWM verification failed") : L"Select a mode to replace legacy gamma");
         }
         AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(popup, MF_STRING | (autoStart_ ? MF_CHECKED : MF_UNCHECKED),
@@ -428,7 +430,8 @@ private:
                     }
                 }
                 const DWORD dwmPid = currentDwm(patcher_.session);
-                if (dwmPid != current_.pid) {
+                // 仅当两次读取的 PID 均为非零有效值且真正发生变化时，才判定为 DWM 进程发生重启
+                if (dwmPid != 0 && current_.pid != 0 && dwmPid != current_.pid) {
                     const ULONGLONG now = GetTickCount64();
                     dwmRestarts_.push_back(now);
                     // 清理 30 秒以前的历史重启记录
@@ -450,6 +453,9 @@ private:
                         startWork(persisted_, true);
                         return 0;
                     }
+                } else if (current_.pid == 0 && dwmPid != 0) {
+                    refresh();
+                    updateTooltip();
                 }
                 startWork(current_.mode, false);
             }
