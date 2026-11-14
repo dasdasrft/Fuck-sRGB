@@ -9,7 +9,6 @@
 #include <dwmapi.h>
 #include <objbase.h>
 
-
 #pragma warning(push)
 #pragma warning(disable: 4458)
 #include <gdiplus.h>
@@ -37,7 +36,7 @@ namespace ModernUI {
 using namespace Gdiplus;
 
 // ============================================================================
-// KIN Design System (v3.0.4) Design Tokens & Color Space
+// KIN Design System (v3.0.4) Design Tokens & Hierarchy
 // Principles: quiet-intelligence, content-priority, structure-felt-not-seen, dense-but-legible
 // ============================================================================
 namespace Kin {
@@ -50,14 +49,14 @@ namespace Kin {
     static const Color Surface4(255, 32, 33, 36);      // #202124 (toggle wells / badges)
 
     // Interactive States
-    static const Color SurfaceHover(16, 255, 255, 255);    // rgba(255, 255, 255, 0.045)
-    static const Color SurfaceSelected(32, 94, 106, 210);  // rgba(94, 106, 210, 0.12)
+    static const Color SurfaceHover(18, 255, 255, 255);    // rgba(255, 255, 255, 0.045)
+    static const Color SurfaceSelected(36, 94, 106, 210);  // rgba(94, 106, 210, 0.14)
     static const Color FocusRing(184, 130, 143, 255);      // rgba(130, 143, 255, 0.72)
 
     // Hairline Borders & Dividers (structure-felt-not-seen)
     static const Color LineSubtle(16, 255, 255, 255);      // rgba(255, 255, 255, 0.055)
-    static const Color LineDefault(24, 255, 255, 255);     // rgba(255, 255, 255, 0.09)
-    static const Color LineStrong(40, 255, 255, 255);      // rgba(255, 255, 255, 0.15)
+    static const Color LineDefault(26, 255, 255, 255);     // rgba(255, 255, 255, 0.09)
+    static const Color LineStrong(45, 255, 255, 255);      // rgba(255, 255, 255, 0.16)
 
     // Text Hierarchy
     static const Color TextPrimary(255, 244, 245, 247);    // #f4f5f7
@@ -70,11 +69,11 @@ namespace Kin {
     static const Color AccentHover(255, 98, 109, 204);     // #626dcc
     static const Color AccentSoft(36, 94, 106, 210);       // rgba(94, 106, 210, 0.14)
     static const Color Positive(255, 80, 173, 125);        // #50ad7d (HDR Active / Normal)
-    static const Color PositiveSoft(28, 80, 173, 125);     // rgba(80, 173, 125, 0.10)
+    static const Color PositiveSoft(30, 80, 173, 125);     // rgba(80, 173, 125, 0.12)
     static const Color Warning(255, 198, 154, 69);         // #c69a45 (Cooldown protection)
-    static const Color WarningSoft(28, 198, 154, 69);      // rgba(198, 154, 69, 0.10)
+    static const Color WarningSoft(30, 198, 154, 69);      // rgba(198, 154, 69, 0.12)
     static const Color Critical(255, 216, 88, 102);        // #d85866 (Danger / Close button hover)
-    static const Color CriticalSoft(28, 216, 88, 102);     // rgba(216, 88, 102, 0.10)
+    static const Color CriticalSoft(30, 216, 88, 102);     // rgba(216, 88, 102, 0.12)
 }
 
 struct DashboardCallbacks {
@@ -91,10 +90,10 @@ struct DashboardCallbacks {
 class DashboardWindow {
 public:
     static constexpr wchar_t className[] = L"FuckSRGB.KinDashboard.1";
-    static constexpr int defaultWidth = 780;
-    static constexpr int defaultHeight = 580;
-    static constexpr int minWidth = 680;
-    static constexpr int minHeight = 520;
+    static constexpr int defaultWidth = 840;
+    static constexpr int defaultHeight = 620;
+    static constexpr int minWidth = 720;
+    static constexpr int minHeight = 540;
 
     explicit DashboardWindow(HINSTANCE instance, DashboardCallbacks callbacks)
         : instance_(instance), callbacks_(std::move(callbacks)) {
@@ -167,7 +166,7 @@ private:
         wc.lpszClassName = className;
         wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(101));
-        wc.hbrBackground = nullptr; // 双缓冲无闪烁自绘
+        wc.hbrBackground = nullptr;
         RegisterClassW(&wc);
     }
 
@@ -177,7 +176,6 @@ private:
         const int posX = (screenW - defaultWidth) / 2;
         const int posY = (screenH - defaultHeight) / 2;
 
-        // 使用支持无边框拉伸、Aero Snap 与阴影的窗口样式组合
         hwnd_ = CreateWindowExW(
             WS_EX_APPWINDOW,
             className,
@@ -189,44 +187,53 @@ private:
 
         if (!hwnd_) return;
 
-        // 启用 Windows 11 原生深色模式与圆角支持
+        // Windows 11 深色模式与圆角
         BOOL darkMode = TRUE;
         DwmSetWindowAttribute(hwnd_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
         DWORD corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd_, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-        // 扩展 DWM 边框到客户区，保留系统级硬件阴影与 Aero 贴边贴角能力
+        // 扩展边框保留 DWM 原生投影与 Aero Snap 吸附
         MARGINS margins = { 1, 1, 1, 1 };
         DwmExtendFrameIntoClientArea(hwnd_, &margins);
 
-        // 触发非客户区重算，彻底移除原生老旧标题栏
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
-        // 启动 300ms 定时器用于倒计时刷新与状态检测
         SetTimer(hwnd_, 101, 300, nullptr);
     }
 
+    // 动态弹性布局计算：彻底消除空白断层与文字越界
     void updateLayout(float w, float h) {
-        // 自定义 KIN 标题栏高度 40px
-        const float btnW = 44.0f;
-        const float btnH = 40.0f;
-        titleCloseRect_ = RectF(w - btnW, 0.0f, btnW, btnH);
-        titleMaxRect_   = RectF(w - btnW * 2.0f, 0.0f, btnW, btnH);
-        titleMinRect_   = RectF(w - btnW * 3.0f, 0.0f, btnW, btnH);
+        // 自定义 KIN 标题栏高度 46px
+        const float titleBarH = 46.0f;
+        const float btnW = 46.0f;
+        titleCloseRect_ = RectF(w - btnW, 0.0f, btnW, titleBarH);
+        titleMaxRect_   = RectF(w - btnW * 2.0f, 0.0f, btnW, titleBarH);
+        titleMinRect_   = RectF(w - btnW * 3.0f, 0.0f, btnW, titleBarH);
 
-        const float padX = 22.0f;
-        const float titleBarH = 40.0f;
-        const float footerH = 56.0f;
-        const float padTop = 14.0f;
+        const float footerH = 64.0f;
+        const float padTop = 16.0f;
+        const float padBottom = 16.0f;
 
+        // 宽度响应式居中：在大屏/4K下最大宽度限制在1350px，保证视觉呼吸感与黄金比例
+        const float maxContentW = (std::min)(w - 48.0f, 1350.0f);
+        const float padX = (std::max)(24.0f, (w - maxContentW) * 0.5f);
+        const float availW = w - padX * 2.0f;
+
+        // 计算可用于卡片的内容垂直总高度
         const float startY = titleBarH + padTop;
-        const float availW = (std::max)(100.0f, w - padX * 2.0f);
-        const float availH = (std::max)(100.0f, h - startY - footerH - 12.0f);
+        const float footerY = h - footerH;
+        const float totalContentH = (std::max)(360.0f, footerY - startY - padBottom);
 
-        // 上半部：EOTF 曲线图 (52%) 与 管线监控 (48%) 响应式自适应
-        const float topRowH = (std::max)(185.0f, (std::min)(235.0f, availH * 0.55f));
-        const float gapX = 14.0f;
+        // 上下两层黄金分割比例 (上半图表约占 50%，下半模式卡片约占 50%，间距 16px)
+        const float gapY = 16.0f;
+        const float remainingForRows = totalContentH - gapY;
+        const float topRowH = (std::max)(210.0f, remainingForRows * 0.51f);
+        const float cardH = (std::max)(170.0f, remainingForRows - topRowH);
+
+        // 上半部左右分栏：EOTF 曲线 (52%) + 管线监控 (48%)
+        const float gapX = 16.0f;
         const float leftW = (availW - gapX) * 0.52f;
         const float rightW = (availW - gapX) * 0.48f;
 
@@ -234,21 +241,18 @@ private:
         telemetryCardRect_ = RectF(padX + leftW + gapX, startY, rightW, topRowH);
 
         // 中间部：4 模式卡片水平排布
-        const float middleY = startY + topRowH + 12.0f;
-        const float cardH = (std::max)(125.0f, (std::min)(160.0f, h - middleY - footerH - 12.0f));
-
-        const float cardGap = 10.0f;
+        const float middleY = startY + topRowH + gapY;
+        const float cardGap = 12.0f;
         const float cardW = (availW - cardGap * 3.0f) / 4.0f;
 
         for (int i = 0; i < 4; ++i) {
             cardRects_[i] = RectF(padX + i * (cardW + cardGap), middleY, cardW, cardH);
         }
 
-        // 底部：KIN 开关与操作按钮
-        const float footerY = h - footerH;
-        toggleRect_ = RectF(padX, footerY + 17.0f, 38.0f, 20.0f);
-        exitBtnRect_ = RectF(w - padX - 80.0f, footerY + 12.0f, 80.0f, 32.0f);
-        minBtnRect_ = RectF(w - padX - 80.0f - 10.0f - 115.0f, footerY + 12.0f, 115.0f, 32.0f);
+        // 底部 Footer 控件布局
+        toggleRect_ = RectF(padX, footerY + 22.0f, 38.0f, 20.0f);
+        exitBtnRect_ = RectF(w - padX - 88.0f, footerY + 15.0f, 88.0f, 34.0f);
+        minBtnRect_ = RectF(w - padX - 88.0f - 12.0f - 120.0f, footerY + 15.0f, 120.0f, 34.0f);
     }
 
     bool isOverTitleBarButtons(float x, float y) const {
@@ -271,10 +275,8 @@ private:
 
         switch (message) {
         case WM_NCCALCSIZE: {
-            // 返回 0 完全消除 Windows 原生粗丑标题栏与非客户区，呈现 100% 现代客户区自绘
             if (wp) {
                 if (IsZoomed(hwnd)) {
-                    // 最大化时自动适配当前屏幕工作区，避免边缘溢出
                     auto* params = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
                     HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
                     MONITORINFO mi{ sizeof(mi) };
@@ -295,7 +297,6 @@ private:
             const int border = 6;
             const bool canResize = !IsZoomed(hwnd);
 
-            // 边缘拉伸命中测试（提供 Windows 原生平滑的上下左右及四角无缝自由拉伸调整大小）
             if (canResize) {
                 bool left   = pt.x >= rc.left && pt.x < rc.left + border;
                 bool right  = pt.x < rc.right && pt.x >= rc.right - border;
@@ -315,12 +316,11 @@ private:
             POINT clientPt = pt;
             ScreenToClient(hwnd, &clientPt);
 
-            // 顶部 40px 自定义标题栏区域
-            if (clientPt.y >= 0 && clientPt.y < 40) {
+            // 标题栏 46px 拖拽与双击最大化区域
+            if (clientPt.y >= 0 && clientPt.y < 46) {
                 if (window->isOverTitleBarButtons(static_cast<float>(clientPt.x), static_cast<float>(clientPt.y))) {
-                    return HTCLIENT; // 允许按钮捕获悬停与点击
+                    return HTCLIENT;
                 }
-                // 返回 HTCAPTION：让系统原生支持无缝拖动窗口、双击最大化/还原以及贴边 Aero Snap！
                 return HTCAPTION;
             }
 
@@ -351,7 +351,7 @@ private:
         }
 
         case WM_ERASEBKGND:
-            return TRUE; // 拦截背景擦除，全双缓冲彻底杜绝任何闪烁
+            return TRUE;
 
         case WM_TIMER:
             if (wp == 101) {
@@ -391,7 +391,6 @@ private:
         }
 
         case WM_CLOSE:
-            // 点右上角 X 彻底优雅关闭窗口（隐藏至系统托盘，后台常驻接管 HDR）
             window->hide();
             return 0;
 
@@ -447,7 +446,6 @@ private:
     }
 
     void handleMouseClick(float x, float y) {
-        // 自定义标题栏按钮点击响应
         if (titleMinRect_.Contains(x, y)) {
             ShowWindow(hwnd_, SW_MINIMIZE);
             return;
@@ -457,13 +455,12 @@ private:
             return;
         }
         if (titleCloseRect_.Contains(x, y)) {
-            hide(); // 关闭并隐藏到托盘
+            hide();
             return;
         }
 
         const ULONGLONG cooldown = callbacks_.getCooldownRemainingMs ? callbacks_.getCooldownRemainingMs() : 0;
 
-        // 点击 4 张模式卡片
         for (int i = 0; i < 4; ++i) {
             if (cardRects_[i].Contains(x, y)) {
                 if (cooldown == 0 && callbacks_.onSelectMode) {
@@ -474,7 +471,6 @@ private:
             }
         }
 
-        // 点击开机自启动开关
         if (toggleRect_.Contains(x, y)) {
             if (callbacks_.onToggleAutoStart) {
                 callbacks_.onToggleAutoStart();
@@ -483,13 +479,11 @@ private:
             return;
         }
 
-        // 底部最小化到托盘按钮
         if (minBtnRect_.Contains(x, y)) {
             hide();
             return;
         }
 
-        // 底部退出程序按钮
         if (exitBtnRect_.Contains(x, y)) {
             if (callbacks_.onExit) {
                 callbacks_.onExit();
@@ -498,12 +492,10 @@ private:
         }
     }
 
-    // 绘制符合 KIN 规范的细腻圆角矩形
     void drawRoundedRect(Graphics& g, const Pen* pen, const Brush* brush, const RectF& rect, float radius) {
         if (rect.Width <= 0.0f || rect.Height <= 0.0f) return;
         float r = (std::min)(radius, (std::min)(rect.Width, rect.Height) * 0.5f);
         if (r <= 0.0f) {
-
             if (brush) g.FillRectangle(brush, rect);
             if (pen) g.DrawRectangle(pen, rect);
             return;
@@ -521,7 +513,6 @@ private:
         if (pen) g.DrawPath(pen, &path);
     }
 
-    // 主渲染流程：双缓冲 GDI+ 高精度抗锯齿绘制
     void render(HDC hdc) {
         RECT clientRect{};
         GetClientRect(hwnd_, &clientRect);
@@ -540,21 +531,17 @@ private:
         SolidBrush bgBrush(Kin::Canvas);
         g.FillRectangle(&bgBrush, 0, 0, w, h);
 
-        // KIN 字体族定义
+        // 字体配置：符合 KIN 字级规范 (4.2 Token 层级)
         Font fontDisplay(L"Segoe UI", 12.0f, FontStyleBold, UnitPoint);
-        Font fontHeading(L"Segoe UI", 10.5f, FontStyleBold, UnitPoint);
-        Font fontBody(L"Segoe UI", 9.0f, FontStyleRegular, UnitPoint);
-        Font fontSmall(L"Segoe UI", 8.0f, FontStyleRegular, UnitPoint);
+        Font fontHeading(L"Segoe UI", 11.0f, FontStyleBold, UnitPoint);
+        Font fontBody(L"Segoe UI", 9.5f, FontStyleRegular, UnitPoint);
+        Font fontSmall(L"Segoe UI", 8.5f, FontStyleRegular, UnitPoint);
         Font fontMicro(L"Segoe UI", 7.5f, FontStyleRegular, UnitPoint);
-        Font fontMono(L"Consolas", 8.0f, FontStyleRegular, UnitPoint);
 
         SolidBrush textPrimary(Kin::TextPrimary);
         SolidBrush textSecondary(Kin::TextSecondary);
         SolidBrush textMuted(Kin::TextMuted);
-        SolidBrush textDisabled(Kin::TextDisabled);
-        SolidBrush accentBrush(Kin::Accent);
         SolidBrush positiveBrush(Kin::Positive);
-        SolidBrush warningBrush(Kin::Warning);
 
         const Mode currentMode = callbacks_.getMode ? callbacks_.getMode() : Mode::Srgb;
         const HdrState hdr = callbacks_.getHdrState ? callbacks_.getHdrState() : HdrState::Unavailable;
@@ -563,40 +550,48 @@ private:
         const ULONGLONG cooldownMs = callbacks_.getCooldownRemainingMs ? callbacks_.getCooldownRemainingMs() : 0;
         const bool hdrActive = (hdr == HdrState::Active);
 
-        // 2. 自定义 KIN 无边框标题栏 (Y: 0 ~ 40px, #0b0c0d)
+        // 2. 自定义 KIN 标题栏 (46px, #0b0c0d)
         SolidBrush titleBg(Kin::Sidebar);
-        g.FillRectangle(&titleBg, 0, 0, w, 40);
+        g.FillRectangle(&titleBg, 0, 0, w, 46);
 
-        // 标题栏底部极细发丝分割线 (#ffffff0e)
         Pen titleLinePen(Kin::LineSubtle, 1.0f);
-        g.DrawLine(&titleLinePen, 0.0f, 40.0f, static_cast<float>(w), 40.0f);
+        g.DrawLine(&titleLinePen, 0.0f, 46.0f, static_cast<float>(w), 46.0f);
 
-        // 左侧 KIN 品牌徽标 (Aperture / Gamma 几何符号)
-        RectF brandRect(20.0f, 10.0f, 20.0f, 20.0f);
+        // 左侧品牌徽标
+        const float brandX = graphCardRect_.X;
+        RectF brandRect(brandX, 12.0f, 22.0f, 22.0f);
         SolidBrush brandBg(Kin::Surface3);
         Pen brandBorder(Kin::Accent, 1.0f);
-        drawRoundedRect(g, &brandBorder, &brandBg, brandRect, 4.0f);
+        drawRoundedRect(g, &brandBorder, &brandBg, brandRect, 5.0f);
 
         GraphicsPath brandPath;
-        brandPath.AddBezier(brandRect.X + 4.0f, brandRect.Y + 15.0f,
-                            brandRect.X + 8.0f, brandRect.Y + 13.5f,
-                            brandRect.X + 11.0f, brandRect.Y + 8.5f,
-                            brandRect.X + 16.0f, brandRect.Y + 5.0f);
+        brandPath.AddBezier(brandRect.X + 4.5f, brandRect.Y + 16.0f,
+                            brandRect.X + 9.0f, brandRect.Y + 14.5f,
+                            brandRect.X + 12.0f, brandRect.Y + 9.0f,
+                            brandRect.X + 17.5f, brandRect.Y + 5.5f);
         Pen brandPen(Kin::Accent, 1.8f);
         g.DrawPath(&brandPen, &brandPath);
 
-        // 软件名称与版本药丸标签
-        g.DrawString(L"Fuck sRGB", -1, &fontDisplay, PointF(47.0f, 10.0f), &textPrimary);
+        // 标题文本与自动测距（杜绝重叠与错位）
+        const PointF titlePos(brandX + 30.0f, 12.5f);
+        g.DrawString(L"Fuck sRGB", -1, &fontDisplay, titlePos, &textPrimary);
 
-        RectF verBadge(130.0f, 12.0f, 42.0f, 17.0f);
+        RectF titleBBox;
+        g.MeasureString(L"Fuck sRGB", -1, &fontDisplay, titlePos, &titleBBox);
+
+        // 版本徽标 (动态跟在标题后方)
+        const float badgeX = titlePos.X + titleBBox.Width + 8.0f;
+        RectF verBadge(badgeX, 14.0f, 46.0f, 18.0f);
         SolidBrush verBg(Kin::Surface3);
         Pen verPen(Kin::LineDefault, 1.0f);
-        drawRoundedRect(g, &verPen, &verBg, verBadge, 3.0f);
-        g.DrawString(L"v1.3.2", -1, &fontMicro, PointF(verBadge.X + 5.0f, verBadge.Y + 2.0f), &textMuted);
+        drawRoundedRect(g, &verPen, &verBg, verBadge, 4.0f);
+        g.DrawString(L"v1.3.2", -1, &fontMicro, PointF(verBadge.X + 6.0f, verBadge.Y + 2.5f), &textMuted);
 
-        g.DrawString(L"·  HDR 色彩与伽马校正引擎", -1, &fontSmall, PointF(180.0f, 12.5f), &textMuted);
+        // 副标题文本 (动态跟在版本后方)
+        g.DrawString(L"·   HDR 伽马精度与色彩校正系统", -1, &fontSmall,
+                     PointF(verBadge.X + verBadge.Width + 12.0f, 14.5f), &textMuted);
 
-        // 标题栏右侧自定义窗口控制按钮（最小化、最大化/还原、关闭）
+        // 标题栏右侧窗口控制按钮
         auto drawTitleBtn = [&](const RectF& rect, bool hovered, int type) {
             if (hovered) {
                 if (type == 3) {
@@ -633,33 +628,35 @@ private:
         // 3. 上半部左侧：EOTF 实时伽马响应曲线图表
         SolidBrush cardBg(Kin::Surface2);
         Pen cardPen(Kin::LineDefault, 1.0f);
-        drawRoundedRect(g, &cardPen, &cardBg, graphCardRect_, 7.0f);
+        drawRoundedRect(g, &cardPen, &cardBg, graphCardRect_, 8.0f);
 
+        // 标题行预留充分间距
         g.DrawString(L"伽马响应曲线 (EOTF 对比)", -1, &fontHeading,
-                     PointF(graphCardRect_.X + 16.0f, graphCardRect_.Y + 12.0f), &textPrimary);
-        g.DrawString(L"实时渲染", -1, &fontMicro,
-                     PointF(graphCardRect_.X + graphCardRect_.Width - 60.0f, graphCardRect_.Y + 14.0f), &textMuted);
+                     PointF(graphCardRect_.X + 20.0f, graphCardRect_.Y + 16.0f), &textPrimary);
+        g.DrawString(L"实时渲染管线", -1, &fontMicro,
+                     PointF(graphCardRect_.X + graphCardRect_.Width - 85.0f, graphCardRect_.Y + 18.0f), &textMuted);
 
-        // 坐标系参数
-        const float gx = graphCardRect_.X + 34.0f;
-        const float gy = graphCardRect_.Y + graphCardRect_.Height - 34.0f;
-        const float gw = graphCardRect_.Width - 50.0f;
-        const float gh = graphCardRect_.Height - 74.0f;
+        // 坐标系严格内缩，彻底杜绝任何曲线与文字越界碰撞
+        const float gx = graphCardRect_.X + 46.0f;
+        const float gy = graphCardRect_.Y + graphCardRect_.Height - 48.0f;
+        const float gw = graphCardRect_.Width - 72.0f;
+        const float gh = gy - (graphCardRect_.Y + 58.0f);
 
-        Pen gridPen(Color(12, 255, 255, 255), 1.0f);
-        Pen axisPen(Color(32, 255, 255, 255), 1.0f);
+        Pen gridPen(Color(14, 255, 255, 255), 1.0f);
+        Pen axisPen(Color(36, 255, 255, 255), 1.0f);
         g.DrawLine(&gridPen, gx, gy - gh * 0.5f, gx + gw, gy - gh * 0.5f);
         g.DrawLine(&gridPen, gx + gw * 0.5f, gy, gx + gw * 0.5f, gy - gh);
         g.DrawLine(&axisPen, gx, gy, gx + gw, gy);
         g.DrawLine(&axisPen, gx, gy, gx, gy - gh);
 
-        g.DrawString(L"0", -1, &fontMicro, PointF(gx - 12.0f, gy - 6.0f), &textMuted);
-        g.DrawString(L"1.0", -1, &fontMicro, PointF(gx + gw - 8.0f, gy + 3.0f), &textMuted);
-        g.DrawString(L"1.0", -1, &fontMicro, PointF(gx - 18.0f, gy - gh - 6.0f), &textMuted);
+        g.DrawString(L"0", -1, &fontMicro, PointF(gx - 14.0f, gy - 6.0f), &textMuted);
+        g.DrawString(L"0.5", -1, &fontMicro, PointF(gx - 24.0f, gy - gh * 0.5f - 6.0f), &textMuted);
+        g.DrawString(L"1.0", -1, &fontMicro, PointF(gx - 24.0f, gy - gh - 7.0f), &textMuted);
+        g.DrawString(L"0.5", -1, &fontMicro, PointF(gx + gw * 0.5f - 8.0f, gy + 6.0f), &textMuted);
+        g.DrawString(L"1.0", -1, &fontMicro, PointF(gx + gw - 8.0f, gy + 6.0f), &textMuted);
 
-        // 绘制 4 条曲线（原生、Gamma2.2、Gamma2.4、线性）
         auto plotCurve = [&](int modeIdx, Color color, float width) {
-            constexpr int steps = 50;
+            constexpr int steps = 60;
             std::vector<PointF> pts;
             pts.reserve(steps + 1);
             for (int s = 0; s <= steps; ++s) {
@@ -680,42 +677,42 @@ private:
             g.DrawLines(&pen, pts.data(), static_cast<INT>(pts.size()));
         };
 
-        // 先画未激活的参考曲线 (以 KIN 柔和低透明度灰度线渲染)
         for (int m = 0; m < 4; ++m) {
             if (m != static_cast<int>(currentMode)) {
                 plotCurve(m, Color(70, 139, 143, 152), 1.0f);
             }
         }
-        // 高亮激活模式曲线 (以 KIN 专属 Purple-Indigo 粗线醒目绘制)
-        plotCurve(static_cast<int>(currentMode), Kin::Accent, 2.6f);
+        plotCurve(static_cast<int>(currentMode), Kin::Accent, 2.8f);
 
-        // 底部图例
-        const wchar_t* legends[] = { L"● 原生", L"● 2.2", L"● 2.4", L"● 线性" };
-        const float legW = gw / 4.0f;
+        // 底部图例（居中分布且间距舒展）
+        const wchar_t* legends[] = { L"● 原生 sRGB", L"● Gamma 2.2", L"● Gamma 2.4", L"● 线性 1.0" };
+        const float legColW = gw / 4.0f;
         for (int i = 0; i < 4; ++i) {
             const bool isCur = (static_cast<int>(currentMode) == i);
             SolidBrush lBrush(isCur ? Kin::Accent : Kin::TextMuted);
-            g.DrawString(legends[i], -1, &fontSmall, PointF(gx + i * legW + 4.0f, gy + 12.0f), &lBrush);
+            g.DrawString(legends[i], -1, &fontSmall, PointF(gx + i * legColW + 2.0f, gy + 24.0f), &lBrush);
         }
 
         // 3. 上半部右侧：系统管线与色彩监控面板
-        drawRoundedRect(g, &cardPen, &cardBg, telemetryCardRect_, 7.0f);
+        drawRoundedRect(g, &cardPen, &cardBg, telemetryCardRect_, 8.0f);
         g.DrawString(L"系统管线与色彩监控", -1, &fontHeading,
-                     PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + 12.0f), &textPrimary);
+                     PointF(telemetryCardRect_.X + 20.0f, telemetryCardRect_.Y + 16.0f), &textPrimary);
 
-        // 右上角 HDR 状态指示药丸标签
-        RectF badgeRect(telemetryCardRect_.X + telemetryCardRect_.Width - 142.0f,
-                       telemetryCardRect_.Y + 11.0f, 126.0f, 22.0f);
+        // 右上角 HDR 状态指示徽章（自适应文字长度，右侧预留 20px 边距绝不溢出）
+        const wchar_t* badgeText = hdrActive ? L"HDR 已生效 (BT.2020)" : L"HDR 未开启 (SDR)";
+        RectF badgeTextBBox;
+        g.MeasureString(badgeText, -1, &fontMicro, PointF(0, 0), &badgeTextBBox);
+        const float badgeW = badgeTextBBox.Width + 26.0f;
+        RectF badgeRect(telemetryCardRect_.X + telemetryCardRect_.Width - badgeW - 20.0f,
+                       telemetryCardRect_.Y + 14.0f, badgeW, 24.0f);
         SolidBrush badgeBg(hdrActive ? Kin::PositiveSoft : Kin::Surface3);
         Pen badgePen(hdrActive ? Kin::Positive : Kin::LineDefault, 1.0f);
         drawRoundedRect(g, &badgePen, &badgeBg, badgeRect, 4.0f);
 
         SolidBrush dotBrush(hdrActive ? Kin::Positive : Kin::TextMuted);
-        g.FillEllipse(&dotBrush, badgeRect.X + 8.0f, badgeRect.Y + 7.0f, 8.0f, 8.0f);
-        const wchar_t* badgeText = hdrActive ? L"HDR 已生效 (BT.2020)" : L"HDR 未开启 (SDR)";
-        g.DrawString(badgeText, -1, &fontMicro, PointF(badgeRect.X + 20.0f, badgeRect.Y + 4.0f), &textPrimary);
+        g.FillEllipse(&dotBrush, badgeRect.X + 8.0f, badgeRect.Y + 8.0f, 8.0f, 8.0f);
+        g.DrawString(badgeText, -1, &fontMicro, PointF(badgeRect.X + 20.0f, badgeRect.Y + 4.5f), &textPrimary);
 
-        // 获取显示器分辨率与刷新率
         DEVMODEW dm{};
         dm.dmSize = sizeof(dm);
         std::wstring resStr = L"3840 × 2160 (主显示器)";
@@ -724,39 +721,40 @@ private:
                      L" @ " + std::to_wstring(dm.dmDisplayFrequency) + L"Hz";
         }
 
+        // 标签列与数值列：标签占 115px，数值自 135px 起始，彻底消除紧贴与碰撞
         auto drawRow = [&](float yOff, const wchar_t* label, const wchar_t* val, Color valCol) {
-            g.DrawString(label, -1, &fontSmall, PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + yOff), &textSecondary);
+            g.DrawString(label, -1, &fontSmall,
+                         PointF(telemetryCardRect_.X + 20.0f, telemetryCardRect_.Y + yOff), &textSecondary);
             SolidBrush vb(valCol);
-            g.DrawString(val, -1, &fontSmall, PointF(telemetryCardRect_.X + 104.0f, telemetryCardRect_.Y + yOff), &vb);
+            g.DrawString(val, -1, &fontSmall,
+                         PointF(telemetryCardRect_.X + 135.0f, telemetryCardRect_.Y + yOff), &vb);
         };
 
-        const float rowGap = 23.0f;
-        float curRowY = 44.0f;
-        drawRow(curRowY, L"当前显示器:", resStr.c_str(), Kin::TextPrimary);
-        curRowY += rowGap;
-        drawRow(curRowY, L"HDR 状态:", hdrActive ? L"已启用 (BT.2020 广色域 / 10-bit)" : L"未开启 (标准动态范围)",
+        // 数据行垂直行距均匀舒展
+        const float rowStart = 56.0f;
+        const float availableRowH = telemetryCardRect_.Height - rowStart - 36.0f;
+        const float rowGap = (std::max)(26.0f, (std::min)(34.0f, availableRowH / 4.0f));
+
+        drawRow(rowStart + 0.0f * rowGap, L"当前显示器:", resStr.c_str(), Kin::TextPrimary);
+        drawRow(rowStart + 1.0f * rowGap, L"HDR 状态:", hdrActive ? L"已启用 (BT.2020 广色域 / 10-bit)" : L"未开启 (标准动态范围)",
                 hdrActive ? Kin::Positive : Kin::TextSecondary);
-        curRowY += rowGap;
-        std::wstring dwmText = dwmPid ? (L"PID " + std::to_wstring(dwmPid) + L" · 着色器已平稳接管") : L"未就绪";
-        drawRow(curRowY, L"DWM 进程:", dwmText.c_str(), Kin::Positive);
-        curRowY += rowGap;
-        drawRow(curRowY, L"开机自启动:", autoStart ? L"免 UAC 计划任务 (最高特权)" : L"未开启",
+        std::wstring dwmText = dwmPid ? (L"PID " + std::to_wstring(dwmPid) + L" · 内存着色器已平稳接管") : L"未就绪";
+        drawRow(rowStart + 2.0f * rowGap, L"DWM 进程:", dwmText.c_str(), Kin::Positive);
+        drawRow(rowStart + 3.0f * rowGap, L"开机自启动:", autoStart ? L"免 UAC 计划任务 (最高特权)" : L"未开启",
                 autoStart ? Kin::Accent : Kin::TextSecondary);
-        curRowY += rowGap;
         if (cooldownMs > 0) {
             std::wstring cdStr = L"显卡防护中 (" + std::to_wstring((cooldownMs + 999) / 1000) + L"s) · 防掉驱动";
-            drawRow(curRowY, L"显卡防护:", cdStr.c_str(), Kin::Warning);
+            drawRow(rowStart + 4.0f * rowGap, L"显卡防护:", cdStr.c_str(), Kin::Warning);
         } else {
-            drawRow(curRowY, L"显卡防护:", L"稳定就绪 (3000ms 刷新保护守卫)", Kin::Positive);
+            drawRow(rowStart + 4.0f * rowGap, L"显卡防护:", L"稳定就绪 (3000ms 刷新保护守卫)", Kin::Positive);
         }
 
-        // 底部微型注释
         g.DrawString(L"注: Windows HDR 混入原生 sRGB 导致暗部泛白，Gamma 2.2/2.4 可恢复纯正黑位。",
                      -1, &fontMicro,
-                     PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + telemetryCardRect_.Height - 22.0f),
+                     PointF(telemetryCardRect_.X + 20.0f, telemetryCardRect_.Y + telemetryCardRect_.Height - 22.0f),
                      &textMuted);
 
-        // 4. 中间部：4 模式卡片 (原生 sRGB, Gamma 2.2, Gamma 2.4, 线性 1.0)
+        // 4. 中间部：4 模式卡片 (充分利用垂直高度与文字排版间距)
         struct CardInfo {
             const wchar_t* title;
             const wchar_t* badge;
@@ -766,10 +764,10 @@ private:
         };
 
         const CardInfo cards[4] = {
-            { L"原生 sRGB", L"默认", L"Windows 默认", L"未校准 sRGB 曲线", L"暗部明显发灰泛白" },
-            { L"Gamma 2.2", L"黄金标准 ★", L"绝大多数游戏", L"与标准影视通用", L"通透饱满 细节均衡" },
-            { L"Gamma 2.4", L"影院母带", L"BT.1886 电影", L"暗室母带制作标准", L"黑场深邃 沉浸浓郁" },
-            { L"线性 1.0", L"专业直出", L"1:1 无曲线映射", L"直出 SDR 原始亮度", L"适合色彩测试调色" }
+            { L"原生 sRGB", L"默认映射", L"Windows 默认色彩曲线", L"未校正 sRGB 曲线映射", L"暗部明显泛白发灰" },
+            { L"Gamma 2.2", L"黄金标准 ★", L"绝大多数游戏与影视", L"标准 sRGB 显示器通用", L"通透饱满 细节与对比均衡" },
+            { L"Gamma 2.4", L"影院母带", L"BT.1886 母带调色标准", L"暗室沉浸视听通用", L"黑场深邃 暗部细节扎实" },
+            { L"线性 1.0", L"专业直出", L"1:1 无曲线亮度直出", L"原始 HDR 色彩直通", L"适合专业调色与测试" }
         };
 
         for (int i = 0; i < 4; ++i) {
@@ -777,49 +775,50 @@ private:
             const bool isSelected = (static_cast<int>(currentMode) == i);
             const bool isHovered = (hoverCardIndex_ == i);
 
-            // 卡片背景与边框按照 KIN 规范层级处理
             SolidBrush cBg(isSelected ? Kin::Surface2 : (isHovered ? Kin::Surface3 : Kin::Surface2));
-            drawRoundedRect(g, nullptr, &cBg, rc, 7.0f);
+            drawRoundedRect(g, nullptr, &cBg, rc, 8.0f);
 
             if (isSelected) {
-                // 激活状态柔和内衬高亮与 Indigo 边框
                 SolidBrush selOverlay(Kin::SurfaceSelected);
-                drawRoundedRect(g, nullptr, &selOverlay, rc, 7.0f);
+                drawRoundedRect(g, nullptr, &selOverlay, rc, 8.0f);
                 Pen selPen(Kin::Accent, 1.5f);
-                drawRoundedRect(g, &selPen, nullptr, rc, 7.0f);
+                drawRoundedRect(g, &selPen, nullptr, rc, 8.0f);
             } else {
                 Pen norPen(isHovered ? Kin::LineStrong : Kin::LineDefault, 1.0f);
-                drawRoundedRect(g, &norPen, nullptr, rc, 7.0f);
+                drawRoundedRect(g, &norPen, nullptr, rc, 8.0f);
             }
 
             // 模式标题
-            g.DrawString(cards[i].title, -1, &fontHeading, PointF(rc.X + 12.0f, rc.Y + 12.0f), &textPrimary);
+            g.DrawString(cards[i].title, -1, &fontHeading, PointF(rc.X + 16.0f, rc.Y + 16.0f), &textPrimary);
 
-            // 小标签 Badge
-            RectF tagRect(rc.X + 12.0f, rc.Y + 36.0f, 84.0f, 18.0f);
+            // 小标签 Badge（自适应宽度，留出内边距）
+            RectF tagBBox;
+            g.MeasureString(cards[i].badge, -1, &fontMicro, PointF(0, 0), &tagBBox);
+            const float tagW = tagBBox.Width + 16.0f;
+            RectF tagRect(rc.X + 16.0f, rc.Y + 44.0f, tagW, 20.0f);
             SolidBrush tagBg(isSelected ? Kin::Accent : Kin::Surface4);
-            drawRoundedRect(g, nullptr, &tagBg, tagRect, 3.0f);
-            g.DrawString(cards[i].badge, -1, &fontMicro, PointF(tagRect.X + 6.0f, tagRect.Y + 2.0f), &textPrimary);
+            drawRoundedRect(g, nullptr, &tagBg, tagRect, 4.0f);
+            g.DrawString(cards[i].badge, -1, &fontMicro, PointF(tagRect.X + 8.0f, tagRect.Y + 3.0f), &textPrimary);
 
-            // 说明文字
-            g.DrawString(cards[i].desc1, -1, &fontSmall, PointF(rc.X + 12.0f, rc.Y + 62.0f), &textSecondary);
-            g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 12.0f, rc.Y + 79.0f), &textSecondary);
-            g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 12.0f, rc.Y + 100.0f), isSelected ? &textPrimary : &textMuted);
+            // 描述文字（舒适行高 22px）
+            g.DrawString(cards[i].desc1, -1, &fontSmall, PointF(rc.X + 16.0f, rc.Y + 76.0f), &textSecondary);
+            g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 16.0f, rc.Y + 98.0f), &textSecondary);
+            g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 16.0f, rc.Y + 124.0f), isSelected ? &textPrimary : &textMuted);
 
-            // 激活/切换指示文字
+            // 底部状态与操作指示
             if (isSelected) {
-                g.DrawString(L"● 已激活生效", -1, &fontSmall, PointF(rc.X + 12.0f, rc.Y + rc.Height - 24.0f), &positiveBrush);
+                g.DrawString(L"● 已激活生效", -1, &fontBody, PointF(rc.X + 16.0f, rc.Y + rc.Height - 30.0f), &positiveBrush);
             } else {
                 const wchar_t* btnLbl = (cooldownMs > 0) ? L"显卡冷却中" : L"点击切换";
                 SolidBrush swBrush((cooldownMs > 0) ? Kin::Warning : Kin::TextMuted);
-                g.DrawString(btnLbl, -1, &fontMicro, PointF(rc.X + 12.0f, rc.Y + rc.Height - 24.0f), &swBrush);
+                g.DrawString(btnLbl, -1, &fontSmall, PointF(rc.X + 16.0f, rc.Y + rc.Height - 30.0f), &swBrush);
             }
         }
 
-        // 5. 底部栏：开机自启开关 与 操作按钮 (Y: h - 56px, #0f1011)
-        const float footerY = static_cast<float>(h) - 56.0f;
+        // 5. 底部栏：开机自启开关 与 操作按钮 (高度 64px, #0f1011)
+        const float footerY = static_cast<float>(h) - 64.0f;
         SolidBrush footerBg(Kin::Surface1);
-        g.FillRectangle(&footerBg, 0.0f, footerY, static_cast<float>(w), 56.0f);
+        g.FillRectangle(&footerBg, 0.0f, footerY, static_cast<float>(w), 64.0f);
 
         Pen footerLinePen(Kin::LineSubtle, 1.0f);
         g.DrawLine(&footerLinePen, 0.0f, footerY, static_cast<float>(w), footerY);
@@ -832,23 +831,23 @@ private:
         SolidBrush knobBrush(Color(255, 255, 255, 255));
         g.FillEllipse(&knobBrush, knobX, toggleRect_.Y + 3.0f, 14.0f, 14.0f);
 
-        g.DrawString(L"开机自动启动 (免 UAC 计划任务)", -1, &fontBody, PointF(toggleRect_.X + 46.0f, footerY + 10.0f), &textPrimary);
-        g.DrawString(L"系统登录时静默常驻托盘并自动载入保存的伽马模式", -1, &fontMicro, PointF(toggleRect_.X + 46.0f, footerY + 30.0f), &textMuted);
+        g.DrawString(L"开机自动启动 (免 UAC 计划任务)", -1, &fontBody, PointF(toggleRect_.X + 48.0f, footerY + 14.0f), &textPrimary);
+        g.DrawString(L"系统登录时静默常驻托盘并自动载入保存的伽马模式", -1, &fontMicro, PointF(toggleRect_.X + 48.0f, footerY + 36.0f), &textMuted);
 
         // 最小化到托盘按钮
         SolidBrush minBtnBg(hoverMinBtn_ ? Kin::Surface3 : Kin::Surface2);
         Pen minBtnPen(Kin::LineDefault, 1.0f);
-        drawRoundedRect(g, &minBtnPen, &minBtnBg, minBtnRect_, 5.0f);
-        g.DrawString(L"最小化到托盘", -1, &fontSmall, PointF(minBtnRect_.X + 18.0f, minBtnRect_.Y + 7.5f), &textSecondary);
+        drawRoundedRect(g, &minBtnPen, &minBtnBg, minBtnRect_, 6.0f);
+        g.DrawString(L"最小化到托盘", -1, &fontSmall, PointF(minBtnRect_.X + 22.0f, minBtnRect_.Y + 8.5f), &textSecondary);
 
         // 退出程序按钮
         SolidBrush exitBtnBg(hoverExitBtn_ ? Kin::CriticalSoft : Kin::Surface2);
         Pen exitBtnPen(hoverExitBtn_ ? Kin::Critical : Kin::LineDefault, 1.0f);
-        drawRoundedRect(g, &exitBtnPen, &exitBtnBg, exitBtnRect_, 5.0f);
+        drawRoundedRect(g, &exitBtnPen, &exitBtnBg, exitBtnRect_, 6.0f);
         SolidBrush exitText(hoverExitBtn_ ? Kin::Critical : Kin::TextMuted);
-        g.DrawString(L"退出程序", -1, &fontSmall, PointF(exitBtnRect_.X + 14.0f, exitBtnRect_.Y + 7.5f), &exitText);
+        g.DrawString(L"退出程序", -1, &fontSmall, PointF(exitBtnRect_.X + 18.0f, exitBtnRect_.Y + 8.5f), &exitText);
 
-        // 6. 非最大化时绘制 1px 细微外边框，完美脱离背景
+        // 6. 非最大化时绘制发丝级外边框
         if (!IsZoomed(hwnd_)) {
             Pen winBorder(Color(28, 255, 255, 255), 1.0f);
             g.DrawRectangle(&winBorder, 0, 0, w - 1, h - 1);
