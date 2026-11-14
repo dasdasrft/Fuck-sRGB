@@ -53,7 +53,8 @@ std::wstring startupContext() {
 
 class Tray {
 public:
-    explicit Tray(HINSTANCE instance) : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))) {
+    explicit Tray(HINSTANCE instance, bool silentMode = false)
+        : icon_(LoadIconW(instance, MAKEINTRESOURCEW(iconResource))), silentMode_(silentMode) {
         if (!icon_) fail(L"Load tray icon");
     }
 
@@ -124,6 +125,7 @@ public:
 private:
     HWND hwnd_{};
     HICON icon_{};
+    bool silentMode_ = false;
     UINT taskbarCreated_{};
     Patcher patcher_;
     EdgeSync edge_{patcher_.session};
@@ -136,6 +138,8 @@ private:
     bool changeDwm_ = false;
     Mode persisted_ = Mode::Srgb;
     bool switching_ = false;
+    bool circuitBroken_ = false;
+    std::vector<ULONGLONG> dwmRestarts_;
     EdgeSyncStatus edgeStatus_{};
     EdgeSyncStatus edgeResult_{};
     bool edgeError_ = false, edgeResultError_ = false;
@@ -163,7 +167,8 @@ private:
 
     void tooltip(NOTIFYICONDATAW& info) const {
         const wchar_t* status = L"Checking DWM";
-        if (hdr_ == HdrState::Inactive) status = L"HDR inactive";
+        if (circuitBroken_) status = L"Safety breaker tripped: DWM unstable";
+        else if (hdr_ == HdrState::Inactive) status = L"HDR inactive";
         else if (hdr_ == HdrState::Unavailable) status = L"HDR status unavailable";
         else if (switching_) status = L"Applying gamma";
         else if (!error_.empty()) status = L"DWM verification failed";
@@ -180,12 +185,15 @@ private:
 
     bool addIcon() const {
         auto info = data();
-        info.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_INFO;
+        info.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+        if (!silentMode_) {
+            info.uFlags |= NIF_INFO;
+            info.dwInfoFlags = NIIF_INFO;
+            wcscpy_s(info.szInfoTitle, title);
+            wcscpy_s(info.szInfo, L"Fuck sRGB is running. Right-click this icon to change the gamma mode.");
+        }
         info.uCallbackMessage = iconMessage;
         info.hIcon = icon_;
-        info.dwInfoFlags = NIIF_INFO;
-        wcscpy_s(info.szInfoTitle, title);
-        wcscpy_s(info.szInfo, L"Fuck sRGB is running. Right-click this icon to change the gamma mode.");
         tooltip(info);
         if (!Shell_NotifyIconW(NIM_ADD, &info)) return false;
         info.uVersion = NOTIFYICON_VERSION_4;
@@ -287,7 +295,7 @@ private:
     }
 
     void startWork(Mode mode, bool changeDwm) {
-        if (busy_) return;
+        if (busy_ || (changeDwm && circuitBroken_)) return;
         const auto before = current_;
         changeDwm_ = changeDwm;
         // The two-second monitor calls this with changeDwm=false; logging every
@@ -370,9 +378,7 @@ private:
             return 0;
         }
         case initMessage:
-            // Queried from the message loop so a slow task query cannot delay
-            // the tray icon. An existing entry is rewritten so a stale or
-            // malformed task from an older build repairs itself.
+            cleanupLegacyTaskOnce();
             autoStart_ = autoStartEnabled();
             writeStartupLog(L"init: autoStart=" + std::to_wstring(autoStart_ ? 1 : 0) +
                             L" exe=" + executablePath());
@@ -389,7 +395,9 @@ private:
                 current_ = result_;
                 if (current_.mode != Mode::Unknown) {
                     error_.clear();
-                    if (current_.mode != persisted_) {
+                    // 仅当用户主动切换或者执行了实际的 DWM 状态变更(changeDwm_)时，才持久化记录偏好，
+                    // 绝不因后台轮询被动同步而篡改抹除用户的持久化偏好
+                    if (changeDwm_ && current_.mode != persisted_) {
                         saveMode(current_.mode);
                         persisted_ = current_.mode;
                     }
@@ -419,15 +427,41 @@ private:
                         return 0;
                     }
                 }
-                if (currentDwm(patcher_.session) != current_.pid) {
+                const DWORD dwmPid = currentDwm(patcher_.session);
+                if (dwmPid != current_.pid) {
+                    const ULONGLONG now = GetTickCount64();
+                    dwmRestarts_.push_back(now);
+                    // 清理 30 秒以前的历史重启记录
+                    dwmRestarts_.erase(std::remove_if(dwmRestarts_.begin(), dwmRestarts_.end(),
+                        [now](ULONGLONG t) { return now - t > 30000; }), dwmRestarts_.end());
+                    if (dwmRestarts_.size() >= 3) {
+                        circuitBroken_ = true;
+                        writeStartupLog(L"CRITICAL: DWM restarted 3 times in 30s! Safety circuit breaker tripped, patching halted.");
+                        error_ = L"Safety breaker tripped: DWM was unstable, patching suspended to prevent crash loop.";
+                        updateTooltip();
+                        return 0;
+                    }
+
                     refresh();
                     updateTooltip();
+                    // 核心修复：DWM 重启或崩溃重拉后，其自身恢复为原始 Mode::Srgb。
+                    // 此时必须为新 DWM 重新打上用户记住的 gamma 模式，绝不能被动轮询覆盖持久化模式！
+                    if (hdr_ == HdrState::Active && current_.mode != Mode::Unknown && persisted_ != current_.mode) {
+                        startWork(persisted_, true);
+                        return 0;
+                    }
                 }
                 startWork(current_.mode, false);
             }
             return 0;
         case WM_DISPLAYCHANGE:
             refreshHdr();
+            if (!busy_) {
+                // 显示状态或 HDR 开启状态改变时立即尝试恢复用户偏好，消除 2 秒轮询延迟
+                if (hdr_ == HdrState::Active && current_.mode != Mode::Unknown && persisted_ != current_.mode) {
+                    startWork(persisted_, true);
+                }
+            }
             return 0;
         case WM_QUERYENDSESSION:
             writeStartupLog(L"WM_QUERYENDSESSION");
@@ -453,18 +487,21 @@ private:
     }
 };
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    writeStartupLog(startupContext());
+    const bool isAutoStart = cmdLine && (wcsstr(cmdLine, L"/autostart") != nullptr || wcsstr(cmdLine, L"-autostart") != nullptr);
+    writeStartupLog(startupContext() + (isAutoStart ? L" [autostart]" : L""));
     writeStartupLog(L"settingsFile=" + settingsFile());
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            // The tray already runs in another process. Surface it instead of
-            // exiting silently, which looked like "nothing happened" when the
-            // executable was started a second time.
+            // The tray already runs in another process.
             writeStartupLog(L"exit: another instance is running");
+            if (isAutoStart) {
+                // 开机自启动实例静默退出，避免无故弹出右键菜单
+                return 0;
+            }
             HWND existing = nullptr;
             for (int attempt = 0; attempt < 10 && !existing; ++attempt) {
                 if (attempt) Sleep(150);
@@ -482,7 +519,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             return 0;
         }
         writeStartupLog(L"instance lock acquired");
-        Tray tray(instance);
+        Tray tray(instance, isAutoStart);
         writeStartupLog(L"tray constructed");
         const int code = tray.run(instance);
         writeStartupLog(L"run returned " + std::to_wstring(code));
