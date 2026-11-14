@@ -200,6 +200,9 @@ private:
         SetWindowPos(hwnd_, nullptr, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
+        // 初始化布局参数
+        updateLayout(static_cast<float>(defaultWidth), static_cast<float>(defaultHeight));
+
         SetTimer(hwnd_, 101, 300, nullptr);
     }
 
@@ -248,10 +251,17 @@ private:
             cardRects_[i] = RectF(padX + i * (cardW + cardGap), middleY, cardW, cardH);
         }
 
-        // 底部 Footer 控件布局
+        // 底部 Footer 控件布局 (按钮独立宽阔、居中对齐、彻底消除文字边框碰撞)
         toggleRect_ = RectF(padX, footerY + 20.0f, 38.0f, 20.0f);
-        exitBtnRect_ = RectF(w - padX - 84.0f, footerY + 14.0f, 84.0f, 32.0f);
-        minBtnRect_ = RectF(w - padX - 84.0f - 10.0f - 114.0f, footerY + 14.0f, 114.0f, 32.0f);
+        
+        const float footerBtnH = 34.0f;
+        const float exitW = 96.0f;
+        const float minW = 128.0f;
+        const float btnGap = 14.0f;
+        const float btnY = footerY + (footerH - footerBtnH) * 0.5f;
+
+        exitBtnRect_ = RectF(w - padX - exitW, btnY, exitW, footerBtnH);
+        minBtnRect_  = RectF(exitBtnRect_.X - btnGap - minW, btnY, minW, footerBtnH);
     }
 
     bool isOverTitleBarButtons(float x, float y) const {
@@ -542,6 +552,11 @@ private:
         SolidBrush textMuted(Kin::TextMuted);
         SolidBrush positiveBrush(Kin::Positive);
 
+        // 全局居中格式化工具 (杜绝任何文字边框位移溢出)
+        StringFormat centerFmt;
+        centerFmt.SetAlignment(StringAlignmentCenter);
+        centerFmt.SetLineAlignment(StringAlignmentCenter);
+
         const Mode currentMode = callbacks_.getMode ? callbacks_.getMode() : Mode::Srgb;
         const HdrState hdr = callbacks_.getHdrState ? callbacks_.getHdrState() : HdrState::Unavailable;
         const bool autoStart = callbacks_.getAutoStart ? callbacks_.getAutoStart() : false;
@@ -571,7 +586,7 @@ private:
         Pen brandPen(Kin::Accent, 1.8f);
         g.DrawPath(&brandPen, &brandPath);
 
-        // 标题文本与自动测距（杜绝重叠与错位）
+        // 标题文本与自动测距
         const PointF titlePos(brandX + 30.0f, 11.5f);
         g.DrawString(L"Fuck sRGB", -1, &fontDisplay, titlePos, &textPrimary);
 
@@ -584,7 +599,7 @@ private:
         SolidBrush verBg(Kin::Surface3);
         Pen verPen(Kin::LineDefault, 1.0f);
         drawRoundedRect(g, &verPen, &verBg, verBadge, 4.0f);
-        g.DrawString(L"v1.3.2", -1, &fontMicro, PointF(verBadge.X + 5.0f, verBadge.Y + 2.0f), &textMuted);
+        g.DrawString(L"v1.3.2", -1, &fontMicro, verBadge, &centerFmt, &textMuted);
 
         // 副标题文本 (动态紧随版本)
         g.DrawString(L"·   HDR 伽马精度与色彩系统", -1, &fontSmall,
@@ -694,11 +709,10 @@ private:
         // 3. 上半部右侧：系统管线监控面板
         drawRoundedRect(g, &cardPen, &cardBg, telemetryCardRect_, 8.0f);
 
-        // 精简标题（系统管线监控），彻底避免与右侧徽标冲突
         g.DrawString(L"系统管线监控", -1, &fontHeading,
                      PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + 14.0f), &textPrimary);
 
-        // 右上角 HDR 状态指示徽章（胶囊宽度精炼，距右边界 16px，彻底杜绝与标题或卡片边缘重叠）
+        // 右上角 HDR 状态指示徽章
         const wchar_t* badgeText = hdrActive ? L"HDR 已生效" : L"HDR 未开启";
         RectF badgeTextBBox;
         g.MeasureString(badgeText, -1, &fontMicro, PointF(0, 0), &badgeTextBBox);
@@ -721,7 +735,6 @@ private:
                      L" @ " + std::to_wstring(dm.dmDisplayFrequency) + L"Hz";
         }
 
-        // 键名预留 95px，数值自 105px 开始，在紧凑卡片下依然具备充足呼吸间距
         auto drawRow = [&](float yOff, const wchar_t* label, const wchar_t* val, Color valCol) {
             g.DrawString(label, -1, &fontSmall,
                          PointF(telemetryCardRect_.X + 16.0f, telemetryCardRect_.Y + yOff), &textSecondary);
@@ -790,16 +803,16 @@ private:
             // 模式标题
             g.DrawString(cards[i].title, -1, &fontHeading, PointF(rc.X + 14.0f, rc.Y + 14.0f), &textPrimary);
 
-            // 小标签 Badge（紧凑优雅）
+            // 小标签 Badge（紧凑优雅，文本严格居中）
             RectF tagBBox;
             g.MeasureString(cards[i].badge, -1, &fontMicro, PointF(0, 0), &tagBBox);
             const float tagW = tagBBox.Width + 14.0f;
             RectF tagRect(rc.X + 14.0f, rc.Y + 38.0f, tagW, 18.0f);
             SolidBrush tagBg(isSelected ? Kin::Accent : Kin::Surface4);
             drawRoundedRect(g, nullptr, &tagBg, tagRect, 4.0f);
-            g.DrawString(cards[i].badge, -1, &fontMicro, PointF(tagRect.X + 7.0f, tagRect.Y + 2.0f), &textPrimary);
+            g.DrawString(cards[i].badge, -1, &fontMicro, tagRect, &centerFmt, &textPrimary);
 
-            // 描述文字（字数精简，即使卡片变窄也具备充足边距）
+            // 描述文字
             g.DrawString(cards[i].desc1, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 66.0f), &textSecondary);
             g.DrawString(cards[i].desc2, -1, &fontSmall, PointF(rc.X + 14.0f, rc.Y + 86.0f), &textSecondary);
             g.DrawString(cards[i].note, -1, &fontMicro, PointF(rc.X + 14.0f, rc.Y + 110.0f), isSelected ? &textPrimary : &textMuted);
@@ -833,18 +846,23 @@ private:
         g.DrawString(L"开机自动启动 (免 UAC 计划任务)", -1, &fontBody, PointF(toggleRect_.X + 46.0f, footerY + 12.0f), &textPrimary);
         g.DrawString(L"系统登录时后台静默常驻系统托盘并自动应用偏好", -1, &fontMicro, PointF(toggleRect_.X + 46.0f, footerY + 32.0f), &textMuted);
 
-        // 最小化到托盘按钮
-        SolidBrush minBtnBg(hoverMinBtn_ ? Kin::Surface3 : Kin::Surface2);
-        Pen minBtnPen(Kin::LineDefault, 1.0f);
-        drawRoundedRect(g, &minBtnPen, &minBtnBg, minBtnRect_, 6.0f);
-        g.DrawString(L"最小化到托盘", -1, &fontSmall, PointF(minBtnRect_.X + 20.0f, minBtnRect_.Y + 8.0f), &textSecondary);
+        // 按钮文本格式化：全局居中对齐，绝不偏移出边框
+        StringFormat btnFmt;
+        btnFmt.SetAlignment(StringAlignmentCenter);
+        btnFmt.SetLineAlignment(StringAlignmentCenter);
 
-        // 退出程序按钮
+        // 最小化到托盘按钮 (宽度 128px, 高度 34px, 间距 14px, 文本居中)
+        SolidBrush minBtnBg(hoverMinBtn_ ? Kin::Surface3 : Kin::Surface2);
+        Pen minBtnPen(hoverMinBtn_ ? Kin::LineStrong : Kin::LineDefault, 1.0f);
+        drawRoundedRect(g, &minBtnPen, &minBtnBg, minBtnRect_, 6.0f);
+        g.DrawString(L"最小化到托盘", -1, &fontSmall, minBtnRect_, &btnFmt, &textSecondary);
+
+        // 退出程序按钮 (宽度 96px, 高度 34px, 文本居中)
         SolidBrush exitBtnBg(hoverExitBtn_ ? Kin::CriticalSoft : Kin::Surface2);
         Pen exitBtnPen(hoverExitBtn_ ? Kin::Critical : Kin::LineDefault, 1.0f);
         drawRoundedRect(g, &exitBtnPen, &exitBtnBg, exitBtnRect_, 6.0f);
         SolidBrush exitText(hoverExitBtn_ ? Kin::Critical : Kin::TextMuted);
-        g.DrawString(L"退出程序", -1, &fontSmall, PointF(exitBtnRect_.X + 16.0f, exitBtnRect_.Y + 8.0f), &exitText);
+        g.DrawString(L"退出程序", -1, &fontSmall, exitBtnRect_, &btnFmt, &exitText);
 
         // 6. 非最大化时绘制发丝级外边框
         if (!IsZoomed(hwnd_)) {
