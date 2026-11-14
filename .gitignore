@@ -2,6 +2,8 @@
 *.zip
 *.obj
 *.pdb
+*.old
+build_helper.py
 .vs/
 build/
 bin/

@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <dwmapi.h>
+#include <objbase.h>
 
 #pragma warning(push)
 #pragma warning(disable: 4458)
@@ -106,7 +107,7 @@ private:
         wc.hInstance = instance_;
         wc.lpfnWndProc = wndProc;
         wc.lpszClassName = className;
-        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
         wc.hIcon = LoadIconW(instance_, MAKEINTRESOURCEW(101));
         wc.hbrBackground = nullptr; // 双缓冲无闪烁绘制
         RegisterClassW(&wc);
@@ -186,7 +187,7 @@ private:
             if (LOWORD(lp) == HTCLIENT) {
                 if (window->hoverCardIndex_ >= 0 || window->hoverToggle_ ||
                     window->hoverMinBtn_ || window->hoverExitBtn_) {
-                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    SetCursor(LoadCursor(nullptr, IDC_HAND));
                     return TRUE;
                 }
             }
