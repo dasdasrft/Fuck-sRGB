@@ -523,24 +523,31 @@ private:
         Pen brandPen(Kin::Accent, 1.8f);
         g.DrawPath(&brandPen, &brandPath);
 
-        // 标题文本与自动测距
+        // 标题文本与自动测距 (以 (0,0) 纯净基准精准测距，彻底杜绝坐标原点叠加漂移)
         const PointF titlePos(brandX + 30.0f, 11.5f);
         g.DrawString(L"Fuck sRGB", -1, &fontDisplay, titlePos, &textPrimary);
 
         RectF titleBBox;
-        g.MeasureString(L"Fuck sRGB", -1, &fontDisplay, titlePos, &titleBBox);
+        g.MeasureString(L"Fuck sRGB", -1, &fontDisplay, PointF(0.0f, 0.0f), &titleBBox);
 
-        // 版本徽标 (动态紧随标题)
-        const float badgeX = titlePos.X + titleBBox.Width + 8.0f;
-        RectF verBadge(badgeX, 13.0f, 44.0f, 18.0f);
+        // 版本徽标药丸 (动态紧随标题，精准垂直居中且清晰可见，永不被遮挡或裁切)
+        const float badgeX = titlePos.X + titleBBox.Width + 10.0f;
+        RectF verTextBBox;
+        g.MeasureString(L"v1.3.2", -1, &fontMicro, PointF(0.0f, 0.0f), &verTextBBox);
+        const float badgeW = (std::max)(50.0f, verTextBBox.Width + 16.0f);
+        const float badgeH = 20.0f;
+        const float badgeY = 12.0f;
+        RectF verBadge(badgeX, badgeY, badgeW, badgeH);
+
         SolidBrush verBg(Kin::Surface3);
         Pen verPen(Kin::LineDefault, 1.0f);
         drawRoundedRect(g, &verPen, &verBg, verBadge, 4.0f);
-        g.DrawString(L"v1.3.2", -1, &fontMicro, verBadge, &centerFmt, &textMuted);
+        g.DrawString(L"v1.3.2", -1, &fontMicro, verBadge, &centerFmt, &textSecondary);
 
-        // 副标题文本 (动态紧随版本)
+        // 副标题文本 (动态紧随版本药丸，安全边距 12px)
+        const float subX = badgeX + badgeW + 12.0f;
         g.DrawString(L"·   HDR 伽马精度与色彩系统", -1, &fontSmall,
-                     PointF(verBadge.X + verBadge.Width + 10.0f, 13.5f), &textMuted);
+                     PointF(subX, 13.5f), &textMuted);
 
         // 标题栏右侧控制按钮：仅保留最小化与关闭，简洁现代
         auto drawTitleBtn = [&](const RectF& rect, bool hovered, bool isClose) {
