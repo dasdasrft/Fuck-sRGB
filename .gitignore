@@ -4,6 +4,7 @@
 *.pdb
 *.old
 build_helper.py
+create_release.py
 .vs/
 build/
 bin/
