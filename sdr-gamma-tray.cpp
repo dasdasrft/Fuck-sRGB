@@ -11,6 +11,7 @@ constexpr UINT revealMessage = WM_APP + 4;
 constexpr UINT firstMode = 100;
 constexpr UINT exitCommand = 110;
 constexpr UINT autoStartCommand = 111;
+constexpr UINT openDashboardCommand = 112;
 constexpr UINT iconResource = 101;
 constexpr const wchar_t* modes[] = {
     L"Native", L"Gamma2.2", L"Gamma2.4", L"Linear"
@@ -18,6 +19,8 @@ constexpr const wchar_t* modes[] = {
 static_assert(ARRAYSIZE(modes) == selectableCount);
 
 enum class HdrState { Unavailable, Inactive, Active };
+
+#include "modern-dashboard.h"
 
 HdrState detectHdr() noexcept {
     try {
@@ -113,6 +116,38 @@ public:
         if (!SetTimer(hwnd_, 1, 2000, nullptr)) fail(L"Start display monitoring");
         persisted_ = loadSavedMode();
         restoreLastMode();
+
+        ModernUI::DashboardCallbacks callbacks;
+        callbacks.getMode = [this] { return current_.mode; };
+        callbacks.getHdrState = [this] { return hdr_; };
+        callbacks.getAutoStart = [this] { return autoStart_; };
+        callbacks.getDwmPid = [this] { return current_.pid; };
+        callbacks.getCooldownRemainingMs = [this]() -> ULONGLONG {
+            const ULONGLONG now = GetTickCount64();
+            if (now - lastSwitchTime_ < 3000) {
+                return 3000 - (now - lastSwitchTime_);
+            }
+            return 0;
+        };
+        callbacks.onSelectMode = [this](Mode m) {
+            select(m);
+            if (dashboard_) dashboard_->refresh();
+        };
+        callbacks.onToggleAutoStart = [this] {
+            toggleAutoStart();
+            if (dashboard_) dashboard_->refresh();
+        };
+        callbacks.onExit = [this] {
+            if (dashboard_) dashboard_->hide();
+            DestroyWindow(hwnd_);
+        };
+        dashboard_ = std::make_unique<ModernUI::DashboardWindow>(instance, callbacks);
+
+        if (!silentMode_) {
+            // 手动启动时，直接弹出优雅的现代化控制中心主窗口
+            dashboard_->show();
+        }
+
         PostMessageW(hwnd_, initMessage, 0, 0);
         writeStartupLog(L"run: message loop");
 
@@ -127,12 +162,14 @@ public:
     }
 
     ~Tray() {
+        if (dashboard_) dashboard_->hide();
         if (worker_.joinable()) worker_.join();
         if (hwnd_ && IsWindow(hwnd_)) DestroyWindow(hwnd_);
     }
 
 private:
     HWND hwnd_{};
+    std::unique_ptr<ModernUI::DashboardWindow> dashboard_;
     HICON icon_{};
     bool silentMode_ = false;
     UINT taskbarCreated_{};
@@ -215,6 +252,7 @@ private:
         info.uFlags = NIF_TIP | NIF_SHOWTIP;
         tooltip(info);
         Shell_NotifyIconW(NIM_MODIFY, &info);
+        if (dashboard_) dashboard_->refresh();
     }
 
     void refreshHdr() {
@@ -279,6 +317,8 @@ private:
         if (active && !busy_ && current_.mode == Mode::Unknown) { refresh(); updateTooltip(); }
         HMENU popup = CreatePopupMenu();
         if (!popup) return;
+        AppendMenuW(popup, MF_STRING, openDashboardCommand, L"Open Control Center");
+        AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
         const ULONGLONG now = GetTickCount64();
         const bool coolingDown = (now - lastSwitchTime_ < 3000);
         UINT flags = MF_STRING;
@@ -376,23 +416,32 @@ private:
         }
         switch (message) {
         case revealMessage: {
-            // A second launch asked this instance to make itself visible.
-            POINT where{};
-            GetCursorPos(&where);
-            menu(where);
+            if (dashboard_) {
+                dashboard_->show();
+            } else {
+                POINT where{};
+                GetCursorPos(&where);
+                menu(where);
+            }
             return 0;
         }
         case iconMessage:
             if (LOWORD(lp) == WM_CONTEXTMENU && HIWORD(lp) == trayId) {
                 POINT where{GET_X_LPARAM(wp), GET_Y_LPARAM(wp)};
                 menu(where);
+            } else if ((LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == NIN_SELECT || LOWORD(lp) == WM_LBUTTONDBLCLK) && HIWORD(lp) == trayId) {
+                if (dashboard_) {
+                    dashboard_->show();
+                }
             }
             return 0;
         case WM_COMMAND: {
             const auto command = LOWORD(wp);
             if (command >= firstMode && command < firstMode + selectableCount)
                 select(static_cast<Mode>(command - firstMode));
-            else if (command == autoStartCommand)
+            else if (command == openDashboardCommand) {
+                if (dashboard_) dashboard_->show();
+            } else if (command == autoStartCommand)
                 toggleAutoStart();
             else if (command == exitCommand)
                 DestroyWindow(hwnd_);
@@ -519,9 +568,15 @@ private:
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
+    Gdiplus::GdiplusStartupInput gdiInput;
+    ULONG_PTR gdiToken = 0;
+    Gdiplus::GdiplusStartup(&gdiToken, &gdiInput, nullptr);
+
     const bool isAutoStart = cmdLine && (wcsstr(cmdLine, L"/autostart") != nullptr || wcsstr(cmdLine, L"-autostart") != nullptr);
     writeStartupLog(startupContext() + (isAutoStart ? L" [autostart]" : L""));
     writeStartupLog(L"settingsFile=" + settingsFile());
+    int exitCode = 0;
     try {
         Handle singleton(CreateMutexW(nullptr, FALSE, L"Local\\Codex.SdrGamma.Tray.1"));
         if (!singleton.value) fail(L"Create tray instance lock");
@@ -529,7 +584,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
             // The tray already runs in another process.
             writeStartupLog(L"exit: another instance is running");
             if (isAutoStart) {
-                // 开机自启动实例静默退出，避免无故弹出右键菜单
+                Gdiplus::GdiplusShutdown(gdiToken);
                 return 0;
             }
             HWND existing = nullptr;
@@ -546,25 +601,25 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
                                       L"Right-click its icon to change the gamma mode.",
                             title, MB_OK | MB_ICONINFORMATION);
             }
+            Gdiplus::GdiplusShutdown(gdiToken);
             return 0;
         }
         writeStartupLog(L"instance lock acquired");
         Tray tray(instance, isAutoStart);
         writeStartupLog(L"tray constructed");
-        const int code = tray.run(instance);
-        writeStartupLog(L"run returned " + std::to_wstring(code));
-        return code;
+        exitCode = tray.run(instance);
+        writeStartupLog(L"run returned " + std::to_wstring(exitCode));
     } catch (const Failure& error) {
         writeStartupLog(L"failure: " + std::wstring(error.operation) + L" code=" + std::to_wstring(error.code));
-        const int box = MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
-        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
+        MessageBoxW(nullptr, errorText(error).c_str(), title, MB_OK | MB_ICONERROR);
+        exitCode = 1;
     } catch (...) {
         writeStartupLog(L"failure: unknown");
-        const int box = MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
-        writeStartupLog(L"failure: message box returned " + std::to_wstring(box));
+        MessageBoxW(nullptr, L"Could not start the tray application.", title, MB_OK | MB_ICONERROR);
+        exitCode = 1;
     }
-    writeStartupLog(L"exit 1");
-    return 1;
+    Gdiplus::GdiplusShutdown(gdiToken);
+    return exitCode;
 }
 
 
